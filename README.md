@@ -44,17 +44,49 @@ o contrário nunca.
 
 | Método | Rota | O que faz |
 | --- | --- | --- |
-| GET | `/health` | healthcheck |
+| GET | `/health` | healthcheck (serve de sonda de conectividade no PWA) |
 | GET/POST | `/api/subjects` | eixos temáticos (aceita `parent_id`) |
+| PATCH/DELETE | `/api/subjects/:id` | editar / remover |
 | GET/POST | `/api/bancas` | bancas |
+| PATCH/DELETE | `/api/bancas/:id` | editar / remover |
 | GET/POST | `/api/exams` | concursos |
+| PATCH/DELETE | `/api/exams/:id` | editar / remover |
 | GET/POST | `/api/questions` | questões (filtros `subject_id`, `banca_id`, `limit`) |
+| GET/PATCH/DELETE | `/api/questions/:id` | ler / editar / remover |
 | POST | `/api/questions/:id/attempts` | responde: `answer` + `confidence` |
 | GET/POST | `/api/flashcards` | cards |
 | GET | `/api/flashcards/due` | cards vencidos |
+| GET/PATCH/DELETE | `/api/flashcards/:id` | ler / editar / remover |
 | POST | `/api/flashcards/:id/reviews` | autoavaliação: `grade` de 1 a 4 |
 | **GET** | **`/api/study/queue?minutes=40`** | **a fila do dia** |
 | GET | `/api/dashboard/overview` | acerto por eixo e por concurso, cards vencidos vs. maduros, confiança e volume de 7/30 dias |
+
+### A fila do dia é autossuficiente
+
+Cada item de `/api/study/queue` já vem com o conteúdo inteiro — `front`/`back`
+do card, ou `statement`/`alternatives`/`correct_answer` da questão — mais o
+nome do eixo e os `reasons` da priorização. Um request só: dá para o service
+worker cachear a sessão antes de sair de casa e estudar sem rede.
+
+O `correct_answer` viaja junto para o app corrigir offline. O servidor não
+confia nisso: `POST /attempts` recalcula `is_correct` contra o banco.
+
+### PATCH parcial
+
+Envie só os campos que mudam. Campo ausente não é tocado; em campos opcionais
+(`banca_id`, `exam_id`, `parent_id`, `source_question_id`), o valor `0`
+desvincula.
+
+### Erros
+
+Toda falha responde `{"error": "...", "code": "..."}`:
+
+| Status | `code` | Quando |
+| --- | --- | --- |
+| 400 | `invalid` | dado errado no pedido (`subject_id não existe`, campo obrigatório vazio) |
+| 404 | `not_found` | não existe — o app pode tirar do cache |
+| 409 | `conflict` | está em uso (apagar um eixo que ainda tem questões) |
+| 500 | `internal` | erro inesperado; o detalhe fica no log do servidor, nunca na resposta |
 
 ## As duas peças que importam
 

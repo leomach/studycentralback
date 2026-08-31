@@ -1,0 +1,180 @@
+package question
+
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
+
+type Repository struct {
+	db *gorm.DB
+}
+
+func NewRepository(db *gorm.DB) *Repository { return &Repository{db: db} }
+
+type ListFilter struct {
+	SubjectID uint
+	BancaID   uint
+	Limit     int
+}
+
+func (r *Repository) List(userID uint, f ListFilter) ([]Question, error) {
+	q := r.db.Where("user_id = ?", userID)
+	if f.SubjectID != 0 {
+		q = q.Where("subject_id = ?", f.SubjectID)
+	}
+	if f.BancaID != 0 {
+		q = q.Where("banca_id = ?", f.BancaID)
+	}
+	if f.Limit > 0 {
+		q = q.Limit(f.Limit)
+	}
+
+	var questions []Question
+	err := q.Order("id desc").Find(&questions).Error
+	return questions, err
+}
+
+func (r *Repository) FindByID(userID, id uint) (Question, error) {
+	var question Question
+	err := r.db.Where("user_id = ? AND id = ?", userID, id).First(&question).Error
+	return question, err
+}
+
+func (r *Repository) Create(q *Question) error { return r.db.Create(q).Error }
+
+func (r *Repository) Update(q *Question, fields map[string]any) error {
+	return r.db.Model(q).Updates(fields).Error
+}
+
+func (r *Repository) Delete(userID, id uint) (int64, error) {
+	res := r.db.Where("user_id = ? AND id = ?", userID, id).Delete(&Question{})
+	return res.RowsAffected, res.Error
+}
+
+func (r *Repository) CreateAttempt(a *Attempt) error { return r.db.Create(a).Error }
+
+// SubjectStat alimenta o dashboard e a fila do dia: quantas tentativas e
+// quantos acertos por eixo temático.
+type SubjectStat struct {
+	SubjectID uint `json:"subject_id"`
+	Attempts  int  `json:"attempts"`
+	Correct   int  `json:"correct"`
+}
+
+func (r *Repository) SubjectStats(userID uint) ([]SubjectStat, error) {
+	var stats []SubjectStat
+	err := r.db.
+		Table("attempts").
+		Select("questions.subject_id AS subject_id, COUNT(*) AS attempts, "+
+			"COUNT(*) FILTER (WHERE attempts.is_correct) AS correct").
+		Joins("JOIN questions ON questions.id = attempts.question_id").
+		Where("attempts.user_id = ?", userID).
+		Group("questions.subject_id").
+		Scan(&stats).Error
+	return stats, err
+}
+
+// QueueCandidate é a questão como a fila do dia a enxerga: o que a
+// priorização precisa (eixo, tentativas) mais o conteúdo que o app vai
+// mostrar. Levar o enunciado junto é o que permite baixar a fila inteira num
+// request só e estudar sem rede depois.
+type QueueCandidate struct {
+	ID            uint         `json:"id"`
+	SubjectID     uint         `json:"subject_id"`
+	Attempts      int          `json:"attempts"`
+	Format        Format       `json:"format"`
+	Statement     string       `json:"statement"`
+	Alternatives  Alternatives `json:"alternatives"`
+	CorrectAnswer string       `json:"correct_answer"`
+}
+
+// Candidates traz as questões elegíveis para a fila, as nunca respondidas
+// primeiro. O corte fino de prioridade é do BuildQueue, não daqui.
+func (r *Repository) Candidates(userID uint, limit int) ([]QueueCandidate, error) {
+	q := r.db.
+		Table("questions").
+		Select("questions.id, questions.subject_id, questions.format, "+
+			"questions.statement, questions.alternatives, questions.correct_answer, "+
+			"COUNT(attempts.id) AS attempts").
+		Joins("LEFT JOIN attempts ON attempts.question_id = questions.id AND attempts.user_id = questions.user_id").
+		Where("questions.user_id = ?", userID).
+		Group("questions.id, questions.subject_id, questions.format, " +
+			"questions.statement, questions.alternatives, questions.correct_answer").
+		Order("attempts, questions.id")
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+
+	var cands []QueueCandidate
+	err := q.Scan(&cands).Error
+	return cands, err
+}
+
+// ConfidenceStat cruza certeza declarada com acerto real — o dado mais
+// revelador do sistema: acerto no chute e erro na certeza.
+type ConfidenceStat struct {
+	Confidence Confidence `json:"confidence"`
+	Attempts   int        `json:"attempts"`
+	Correct    int        `json:"correct"`
+}
+
+func (r *Repository) ConfidenceStats(userID uint) ([]ConfidenceStat, error) {
+	var stats []ConfidenceStat
+	err := r.db.
+		Table("attempts").
+		Select("confidence, COUNT(*) AS attempts, COUNT(*) FILTER (WHERE is_correct) AS correct").
+		Where("user_id = ?", userID).
+		Group("confidence").
+		Scan(&stats).Error
+	return stats, err
+}
+
+// ExamStat é o desempenho por concurso — útil para saber se o estilo de uma
+// prova específica está dominado.
+type ExamStat struct {
+	ExamID   uint `json:"exam_id"`
+	Attempts int  `json:"attempts"`
+	Correct  int  `json:"correct"`
+}
+
+func (r *Repository) ExamStats(userID uint) ([]ExamStat, error) {
+	var stats []ExamStat
+	err := r.db.
+		Table("attempts").
+		Select("questions.exam_id, COUNT(*) AS attempts, "+
+			"COUNT(*) FILTER (WHERE attempts.is_correct) AS correct").
+		Joins("JOIN questions ON questions.id = attempts.question_id").
+		Where("attempts.user_id = ? AND questions.exam_id IS NOT NULL", userID).
+		Group("questions.exam_id").
+		Scan(&stats).Error
+	return stats, err
+}
+
+// Volume conta as tentativas em janelas recentes: mede constância, que num
+// estudo de micro-sessões importa mais do que volume absoluto.
+type Volume struct {
+	Last7Days  int64 `json:"last_7_days"`
+	Last30Days int64 `json:"last_30_days"`
+}
+
+func (r *Repository) AttemptVolume(userID uint, now time.Time) (Volume, error) {
+	var v Volume
+
+	count := func(days int) (int64, error) {
+		var n int64
+		err := r.db.Model(&Attempt{}).
+			Where("user_id = ? AND created_at >= ?", userID, now.AddDate(0, 0, -days)).
+			Count(&n).Error
+		return n, err
+	}
+
+	var err error
+	if v.Last7Days, err = count(7); err != nil {
+		return Volume{}, err
+	}
+	if v.Last30Days, err = count(30); err != nil {
+		return Volume{}, err
+	}
+	return v, nil
+}

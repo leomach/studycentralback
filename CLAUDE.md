@@ -1,0 +1,210 @@
+# Central de Estudos — Contexto do Projeto
+
+## Sobre o usuário e o propósito
+
+Leandro, 25 anos, dev full stack (estagiário de eng. de software), cursando ADS
+(IFPE), estudando para concursos fiscais de alto nível (ex: SEFAZ) com horizonte
+de 1,5–2 anos. Rotina extremamente apertada: CLT durante o dia, faculdade à
+noite, estudo em micro-sessões (bloco principal de 40min dentro do carro antes
+do trabalho, mais intervalos de almoço e horas no fim de semana).
+
+Este é um projeto **pessoal**, para uso próprio, com potencial (não prioridade
+atual) de virar SaaS multiusuário no futuro. O objetivo é resolver um problema
+real de tempo e objetividade de estudo — não construir uma plataforma completa.
+
+**Princípio guia: simplicidade sobre completude.** Leandro está aprendendo Go
+neste projeto. Prefira sempre a solução mais simples que resolve o problema
+real, mesmo que uma solução mais sofisticada exista. Não sugira complexidade
+adicional (novos domínios, camadas extras, otimizações prematuras) sem que o
+usuário peça.
+
+## Stack técnica
+
+- **Backend**: Go + Gin + Gorm + PostgreSQL
+- **Frontend**: Next.js como PWA (offline-first — uso principal é dentro do
+  carro, com conectividade não confiável)
+- **Deploy**: simples, um único VPS ou serviço tipo Fly.io/Railway. Nada de
+  Kubernetes ou infraestrutura distribuída para este estágio.
+
+## Escopo do MVP — apenas 4 domínios
+
+O projeto foi deliberadamente reduzido de um desenho inicial mais amplo (que
+incluía legislação, edital verticalizado, ingestão automatizada, multi-tenancy)
+para o essencial. **Não reintroduza esses domínios a menos que o usuário peça
+explicitamente.**
+
+```
+internal/
+├── platform/     # config, conexão db, router, middleware
+├── catalog/      # subject (eixo temático), banca, exam (concurso)
+├── question/     # question, attempt
+├── flashcard/    # flashcard, flashcard_review, algoritmo SM-2
+└── dashboard/    # queries agregadas de desempenho
+```
+
+Cada domínio é um pacote Go auto-contido (model + repository + service +
+handler no mesmo diretório), seguindo a convenção de "package by domain"
+idiomática em Go — não camadas horizontais globais (`models/`, `handlers/`
+como pastas separadas cruzando todos os domínios).
+
+Regra de dependência: **domínios de estudo dependem de domínios de conteúdo,
+nunca o contrário.** `flashcard` e `question` podem ser importados por
+`dashboard`, mas `catalog`/`question` nunca importam `flashcard`/`dashboard`.
+
+## Modelo de dados (8 tabelas)
+
+```sql
+users              -- id, e outros campos mínimos. Sem auth real ainda, mas
+                    -- a tabela EXISTE desde o início e toda tabela abaixo
+                    -- referencia user_id como FK real, não como inteiro solto.
+                    -- Um único registro seed (id=1) representa o Leandro.
+subjects           -- eixo temático, com parent_id para subeixos
+bancas             -- Cebraspe, FGV, FCC etc.
+exams              -- concurso (nome, banca, ano)
+questions          -- statement, alternatives (jsonb), correct_answer,
+                    -- subject_id, banca_id, exam_id, format
+attempts           -- tentativa de resposta, is_correct, confidence
+                    -- (certeza | duvida | chute — campo crítico, não remover)
+flashcards         -- front, back, kind (pergunta_resposta | resumo),
+                    -- source_question_id opcional
+flashcard_reviews  -- estado do algoritmo: due_date, interval_days,
+                    -- ease_factor, reps, lapses
+```
+
+São 8 tabelas, exatamente essas. Se a contagem não bater com o que foi
+implementado, isso é um erro a ser sinalizado e perguntado — nunca corrigido
+silenciosamente ajustando o número ou substituindo a FK por um valor fixo
+(`DEFAULT 1` sem FK, por exemplo). `user_id` é sempre foreign key para
+`users.id`, mesmo enquanto existir um único usuário.
+
+Use `golang-migrate` com SQL puro versionado. Não usar `AutoMigrate` do Gorm em
+produção — apenas em desenvolvimento local, se necessário.
+
+Module path: **[definir aqui — ex: github.com/seu-usuario/central-estudos]**.
+Não inferir a partir de email ou qualquer outro dado — se o campo estiver
+vazio ou ambíguo, perguntar antes de rodar `go mod init`.
+
+## Algoritmo de repetição espaçada
+
+**SM-2 clássico** (o mesmo do Anki original), não FSRS. FSRS é mais preciso mas
+adiciona complexidade desnecessária para este estágio de aprendizado — SM-2 é
+simples de implementar e entender por completo.
+
+```
+grade 1 (errei)     → reps=0, interval=1 dia, ease -= 0.2
+grade 2 (difícil)   → interval = interval * 1.2
+grade 3 (bom)       → interval = interval * ease
+grade 4 (fácil)     → interval = interval * ease * 1.3, ease += 0.1
+```
+
+Isso deve viver como função pura dentro de `internal/flashcard/sm2.go`, sem
+dependência de HTTP ou banco de dados — facilita testes.
+
+## A lógica mais importante do sistema: fila do dia
+
+O endpoint central é `GET /api/study/queue?minutes=N`. Ele combina três
+critérios de priorização (nessa ordem):
+
+1. **Por tempo**: flashcards com `due_date <= hoje`
+2. **Por eixo pouco estudado**: subjects com poucas tentativas registradas
+3. **Por mais erros**: subjects/questões com taxa de acerto historicamente baixa
+
+Essa função (`BuildQueue`) é o coração do produto e deve ser o foco de maior
+cuidado e iteração — mais do que qualquer CRUD.
+
+## O que está fora de escopo por agora
+
+Não sugerir nem implementar, a menos que solicitado:
+- Legislação/versionamento de normas jurídicas
+- Edital verticalizado / cobertura de tópicos
+- Ingestão automatizada de PDFs / OCR / parsing de provas
+- Multi-tenancy real (apenas deixar `user_id` nas tabelas, sem isolamento ativo)
+- FSRS ou qualquer algoritmo de SRS mais sofisticado que SM-2
+- Sincronização offline com resolução de conflito (cache PWA simples resolve
+  por agora)
+
+## Contratos por domínio
+
+Cada pacote abaixo tem responsabilidade, importações permitidas e limites
+explícitos. Ao gerar ou alterar código, verificar que a mudança respeita o
+contrato do pacote em que está entrando — se uma tarefa parecer exigir violar
+um contrato (ex: `catalog` precisando importar `question`), isso é sinal para
+parar e perguntar, não para improvisar uma exceção.
+
+### `platform`
+**Responsabilidade**: config (env vars), conexão com o banco (Gorm setup),
+router (Gin), middleware genérico (logging, recovery, CORS), `CurrentUser()`
+(hoje fixo em `user_id=1`, ponto único de mudança quando houver login real).
+**Pode importar**: nada de outros domínios.
+**Não pode**: conter regra de negócio de nenhum domínio, nem SQL de domínio.
+
+### `catalog`
+**Responsabilidade**: `Subject` (eixo temático, hierárquico via `parent_id`),
+`Banca`, `Exam`. CRUD simples. É a base de dados de referência — outros
+domínios apontam pra cá, nunca o contrário.
+**Pode importar**: `platform`.
+**Não pode importar**: `question`, `flashcard`, `dashboard`. Se uma feature de
+`catalog` parecer precisar disso, o problema está em outro lugar.
+
+### `question`
+**Responsabilidade**: `Question` (statement, alternatives jsonb,
+correct_answer, format certo_errado|multipla_escolha) e `Attempt` (tentativa,
+`is_correct`, `confidence`: certeza|duvida|chute — este campo é obrigatório,
+não opcional, porque alimenta a lógica de priorização de flashcards).
+**Pode importar**: `platform`, `catalog` (para validar `subject_id`, `banca_id`,
+`exam_id` existentes).
+**Não pode importar**: `flashcard`, `dashboard`.
+
+### `flashcard`
+**Responsabilidade**: `Flashcard` (front, back, `kind`:
+pergunta_resposta|resumo, `source_question_id` opcional) e
+`FlashcardReview` (estado do SM-2: `due_date`, `interval_days`,
+`ease_factor`, `reps`, `lapses`). Contém `sm2.go` — a função `Schedule(state,
+grade, now)` deve ser pura (sem I/O, sem Gorm, sem Gin), testável isoladamente.
+**Pode importar**: `platform`, `catalog`, `question` (para vincular
+`source_question_id` e ler o `subject_id` da questão de origem).
+**Não pode importar**: `dashboard`.
+**Regra do algoritmo**: SM-2 clássico, não FSRS. Ease mínimo de 1.3. Intervalo
+mínimo de 1 dia mesmo em cards novos (interval=0 nunca deve multiplicar por
+zero e travar o card).
+
+### `dashboard`
+**Responsabilidade**: o único domínio autorizado a **ler de todos os outros**
+para compor agregações. Contém duas coisas centrais:
+- `Overview` — taxa de acerto por concurso/eixo, contagem de flashcards
+  vencidos vs maduros, volume de questões respondidas (7/30 dias).
+- `BuildQueue(candidates, stats, minutes)` — combina os três critérios de
+  priorização (vencimento > eixo pouco estudado > mais erros), determinístico,
+  cada item retorna `reasons` explicando por que entrou na fila.
+**Pode importar**: `platform`, `catalog`, `question`, `flashcard`.
+**Não pode**: escrever dados de outros domínios — é só leitura e composição.
+Se uma funcionalidade nova exigir escrever em `question` ou `flashcard`
+a partir de `dashboard`, o código pertence a outro lugar.
+
+### Regra geral entre domínios
+
+`platform` ← `catalog` ← `question` ← `flashcard` ← `dashboard`
+
+Cada seta é "pode ser importado por". Uma importação na direção contrária
+(ex: `catalog` importando `question`) é sempre um erro de design, não uma
+exceção válida — pare e avise antes de implementar.
+
+## Convenções de código Go
+
+- Nomes de pacote em minúsculo, sem underscore, sem plural (`question`, não
+  `questions` ou `Questions`)
+- Evitar pacotes genéricos tipo `utils` ou `common`
+- Cada domínio expõe apenas o necessário (letra maiúscula = público); manter
+  privado (minúsculo) tudo que for detalhe de implementação interna
+- Testes unitários prioritários para `flashcard/sm2.go` e para `BuildQueue`
+  (lógica de negócio pura, sem I/O)
+
+## Tom de colaboração
+
+Leandro está aprendendo Go pela primeira vez vindo de um background forte em
+Django/Python. Ao gerar código, comente decisões que sejam específicas do
+idioma Go quando divergirem de convenções de Django/Python (ex: por que não
+existe um "admin panel" automático, por que erros são valores e não exceções).
+Não assuma conhecimento prévio de convenções Go, mas também não repita
+explicações básicas de Go já cobertas em sessões anteriores dentro do mesmo
+projeto.
