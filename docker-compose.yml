@@ -6,7 +6,10 @@ services:
       POSTGRES_PASSWORD: studycentral
       POSTGRES_DB: studycentral
     ports:
-      - "5432:5432"
+      # 5432 do host já está em uso por outro Postgres deste ambiente
+      # (container "postgres-db"); 5435 é livre. A porta interna do
+      # container continua 5432 — só a exposta ao host muda.
+      - "5435:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
 

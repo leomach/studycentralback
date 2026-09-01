@@ -68,9 +68,13 @@ func (s *Service) Queue(userID uint, minutes int) ([]QueueItem, error) {
 			OverdueDays: state.Overdue(now),
 			Due:         state.IsDue(now),
 			Content: Content{
-				CardKind: string(d.Kind),
-				Front:    d.Front,
-				Back:     d.Back,
+				CardKind:     string(d.Kind),
+				Front:        d.Front,
+				Back:         d.Back,
+				IntervalDays: d.IntervalDays,
+				EaseFactor:   d.EaseFactor,
+				Lapses:       d.Lapses,
+				Reps:         d.Reps,
 			},
 		})
 	}
@@ -82,6 +86,8 @@ func (s *Service) Queue(userID uint, minutes int) ([]QueueItem, error) {
 			SubjectName: subjectNames[q.SubjectID],
 			Attempted:   q.Attempts > 0,
 			Content: Content{
+				BancaID:       q.BancaID,
+				ExamID:        q.ExamID,
 				Format:        string(q.Format),
 				Statement:     q.Statement,
 				Alternatives:  q.Alternatives,

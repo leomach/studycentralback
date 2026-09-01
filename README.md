@@ -71,6 +71,29 @@ worker cachear a sessão antes de sair de casa e estudar sem rede.
 O `correct_answer` viaja junto para o app corrigir offline. O servidor não
 confia nisso: `POST /attempts` recalcula `is_correct` contra o banco.
 
+Cada card de flashcard na fila também traz `ease_factor`, `interval_days`,
+`reps` e `lapses` — o estado do SM-2 no momento em que a fila foi montada.
+É o que permite ao app calcular offline o próximo intervalo antes de o usuário
+escolher uma nota (o preview "3 d" nos botões de avaliação), sem consultar o
+servidor.
+
+### Idempotência (`client_id`)
+
+`POST /questions/:id/attempts` e `POST /flashcards/:id/reviews` exigem
+`client_id`, um UUID gerado pelo cliente. É a chave que faz retentativas
+offline seguras: se a mesma sincronização for reenviada porque o app não viu
+a resposta a tempo, a segunda chamada não duplica a tentativa nem reaplica o
+SM-2 sobre o mesmo evento — devolve o resultado já gravado.
+
+Os dois domínios resolvem isso de formas diferentes porque as tabelas têm
+formas diferentes: `attempts` é um log de eventos, então `client_id` é
+`UNIQUE` e a segunda inserção vira busca pela linha existente. Já
+`flashcard_reviews` guarda só o estado *atual* do card (uma linha por
+flashcard, sempre sobrescrita) — não dá pra "ignorar inserção duplicada"
+porque não é um insert. Por isso ali a idempotência compara com o último
+`client_id` aplicado: se bater, devolve o estado já salvo sem rodar o SM-2 de
+novo.
+
 ### PATCH parcial
 
 Envie só os campos que mudam. Campo ausente não é tocado; em campos opcionais

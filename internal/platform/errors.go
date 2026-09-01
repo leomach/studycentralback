@@ -77,6 +77,20 @@ func respond(c *gin.Context, status int, code ErrorKind, msg string) {
 // cadeia de erros até achar um do tipo pedido — é como se inspeciona a causa
 // original em Go, sem depender do texto da mensagem.
 func isForeignKeyViolation(err error) bool {
+	return pgErrorCode(err) == "23503"
+}
+
+// IsUniqueViolation reconhece o 23505 do Postgres (violação de UNIQUE).
+// Exportada porque question e flashcard usam isso para detectar retentativa
+// de escrita idempotente (mesmo client_id) sob concorrência.
+func IsUniqueViolation(err error) bool {
+	return pgErrorCode(err) == "23505"
+}
+
+func pgErrorCode(err error) string {
 	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23503"
+	if errors.As(err, &pgErr) {
+		return pgErr.Code
+	}
+	return ""
 }

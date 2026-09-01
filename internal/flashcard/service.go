@@ -25,8 +25,32 @@ func NewService(repo *Repository, catalogSvc *catalog.Service, questionSvc *ques
 	return &Service{repo: repo, catalog: catalogSvc, questions: questionSvc, now: time.Now}
 }
 
-func (s *Service) List(userID, subjectID uint, limit int) ([]Flashcard, error) {
-	return s.repo.List(userID, subjectID, limit)
+// List devolve os cards com a review (estado do SM-2) embutida: é o que
+// permite ao front derivar o estado (vencido/aprendizado/maduro) de cada card
+// sem uma chamada por card.
+func (s *Service) List(userID, subjectID uint, limit int) ([]WithReview, error) {
+	cards, err := s.repo.List(userID, subjectID, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	ids := make([]uint, len(cards))
+	for i, c := range cards {
+		ids[i] = c.ID
+	}
+	reviews, err := s.repo.ReviewsByFlashcardID(userID, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]WithReview, len(cards))
+	for i, c := range cards {
+		out[i] = WithReview{Flashcard: c}
+		if rv, ok := reviews[c.ID]; ok {
+			out[i].Review = &rv
+		}
+	}
+	return out, nil
 }
 
 type NewFlashcard struct {
@@ -82,7 +106,17 @@ func (s *Service) CountCards(userID uint) (Counts, error) {
 
 // Grade registra a autoavaliação: carrega o estado, aplica o SM-2 puro e
 // persiste o resultado.
-func (s *Service) Grade(userID, flashcardID uint, g Grade) (Review, error) {
+//
+// clientID é a chave de idempotência do outbox offline. Diferente de Attempt
+// (que é um log de eventos), flashcard_reviews guarda só o estado ATUAL do
+// card — não dá para "ignorar inserção duplicada" porque não é um insert, é
+// sempre um update na mesma linha. Por isso a idempotência aqui compara com o
+// último client_id aplicado: se for o mesmo, a retentativa devolve o estado
+// já salvo em vez de rodar o SM-2 de novo sobre o resultado anterior.
+func (s *Service) Grade(userID, flashcardID uint, clientID string, g Grade) (Review, error) {
+	if strings.TrimSpace(clientID) == "" {
+		return Review{}, platform.Invalid("client_id é obrigatório")
+	}
 	if !g.Valid() {
 		return Review{}, platform.Invalid("grade deve ser 1 (errei), 2 (difícil), 3 (bom) ou 4 (fácil)")
 	}
@@ -92,8 +126,13 @@ func (s *Service) Grade(userID, flashcardID uint, g Grade) (Review, error) {
 		return Review{}, err
 	}
 
+	if review.LastClientID == clientID {
+		return review, nil
+	}
+
 	next := Schedule(review.State(), g, s.now())
 	review.applyState(next, g)
+	review.LastClientID = clientID
 	if err := s.repo.SaveReview(&review); err != nil {
 		return Review{}, err
 	}

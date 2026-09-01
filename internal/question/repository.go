@@ -15,6 +15,8 @@ func NewRepository(db *gorm.DB) *Repository { return &Repository{db: db} }
 type ListFilter struct {
 	SubjectID uint
 	BancaID   uint
+	ExamID    uint
+	Format    Format
 	Limit     int
 }
 
@@ -25,6 +27,12 @@ func (r *Repository) List(userID uint, f ListFilter) ([]Question, error) {
 	}
 	if f.BancaID != 0 {
 		q = q.Where("banca_id = ?", f.BancaID)
+	}
+	if f.ExamID != 0 {
+		q = q.Where("exam_id = ?", f.ExamID)
+	}
+	if f.Format != "" {
+		q = q.Where("format = ?", f.Format)
 	}
 	if f.Limit > 0 {
 		q = q.Limit(f.Limit)
@@ -54,6 +62,12 @@ func (r *Repository) Delete(userID, id uint) (int64, error) {
 
 func (r *Repository) CreateAttempt(a *Attempt) error { return r.db.Create(a).Error }
 
+func (r *Repository) FindAttemptByClientID(userID uint, clientID string) (Attempt, error) {
+	var a Attempt
+	err := r.db.Where("user_id = ? AND client_id = ?", userID, clientID).First(&a).Error
+	return a, err
+}
+
 // SubjectStat alimenta o dashboard e a fila do dia: quantas tentativas e
 // quantos acertos por eixo temático.
 type SubjectStat struct {
@@ -82,6 +96,8 @@ func (r *Repository) SubjectStats(userID uint) ([]SubjectStat, error) {
 type QueueCandidate struct {
 	ID            uint         `json:"id"`
 	SubjectID     uint         `json:"subject_id"`
+	BancaID       *uint        `json:"banca_id,omitempty"`
+	ExamID        *uint        `json:"exam_id,omitempty"`
 	Attempts      int          `json:"attempts"`
 	Format        Format       `json:"format"`
 	Statement     string       `json:"statement"`
@@ -94,13 +110,14 @@ type QueueCandidate struct {
 func (r *Repository) Candidates(userID uint, limit int) ([]QueueCandidate, error) {
 	q := r.db.
 		Table("questions").
-		Select("questions.id, questions.subject_id, questions.format, "+
-			"questions.statement, questions.alternatives, questions.correct_answer, "+
-			"COUNT(attempts.id) AS attempts").
+		Select("questions.id, questions.subject_id, questions.banca_id, questions.exam_id, "+
+			"questions.format, questions.statement, questions.alternatives, "+
+			"questions.correct_answer, COUNT(attempts.id) AS attempts").
 		Joins("LEFT JOIN attempts ON attempts.question_id = questions.id AND attempts.user_id = questions.user_id").
 		Where("questions.user_id = ?", userID).
-		Group("questions.id, questions.subject_id, questions.format, " +
-			"questions.statement, questions.alternatives, questions.correct_answer").
+		Group("questions.id, questions.subject_id, questions.banca_id, questions.exam_id, " +
+			"questions.format, questions.statement, questions.alternatives, " +
+			"questions.correct_answer").
 		Order("attempts, questions.id")
 	if limit > 0 {
 		q = q.Limit(limit)

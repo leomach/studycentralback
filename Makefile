@@ -1,4 +1,13 @@
-DATABASE_URL ?= postgres://studycentral:studycentral@localhost:5432/studycentral?sslmode=disable
+# Carrega .env automaticamente, se existir: cada KEY=VALUE vira variável de
+# make, e `export` propaga todas elas para o ambiente de cada comando de
+# receita (inclusive `go run`). Sem isso, `make run` não enxergaria
+# DATABASE_URL a menos que você desse `source .env` você mesmo antes.
+ifneq (,$(wildcard .env))
+    include .env
+    export
+endif
+
+DATABASE_URL ?= postgres://studycentral:studycentral@localhost:5435/studycentral?sslmode=disable
 
 .PHONY: run test fmt vet db-up db-down migrate-up migrate-down
 

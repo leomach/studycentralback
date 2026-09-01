@@ -84,14 +84,15 @@ func (h *Handler) grade(c *gin.Context) {
 	}
 
 	var body struct {
-		Grade Grade `json:"grade"`
+		Grade    Grade  `json:"grade"`
+		ClientID string `json:"client_id"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		platform.Fail(c, platform.Invalid(err.Error()))
 		return
 	}
 
-	review, err := h.svc.Grade(platform.UserID(c), id, body.Grade)
+	review, err := h.svc.Grade(platform.UserID(c), id, body.ClientID, body.Grade)
 	if err != nil {
 		platform.Fail(c, err)
 		return

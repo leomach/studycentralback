@@ -57,12 +57,24 @@ type Candidate struct {
 // a sessão de estudo num request só e usá-la sem rede depois — o cenário do
 // bloco de 40 minutos dentro do carro.
 type Content struct {
-	// Flashcard
-	CardKind string `json:"card_kind,omitempty"`
-	Front    string `json:"front,omitempty"`
-	Back     string `json:"back,omitempty"`
+	// Flashcard. EaseFactor/IntervalDays/Lapses/Reps são o estado do SM-2 no
+	// momento em que a fila foi montada — é o que permite ao app calcular
+	// offline o próximo intervalo de cada nota antes do usuário escolher (o
+	// preview "3 d" nos botões de avaliação), sem consultar o servidor.
+	CardKind     string  `json:"card_kind,omitempty"`
+	Front        string  `json:"front,omitempty"`
+	Back         string  `json:"back,omitempty"`
+	IntervalDays int     `json:"interval_days,omitempty"`
+	EaseFactor   float64 `json:"ease_factor,omitempty"`
+	Lapses       int     `json:"lapses,omitempty"`
+	Reps         int     `json:"reps,omitempty"`
 
-	// Questão
+	// Questão. BancaID/ExamID viajam junto para a sessão renderizar os
+	// metadados discretos ("banca · ano · eixo") sem depender de rede — o
+	// nome da banca e o ano do concurso o app resolve a partir do catálogo,
+	// que já está cacheado localmente por inteiro.
+	BancaID      *uint                 `json:"banca_id,omitempty"`
+	ExamID       *uint                 `json:"exam_id,omitempty"`
 	Format       string                `json:"format,omitempty"`
 	Statement    string                `json:"statement,omitempty"`
 	Alternatives question.Alternatives `json:"alternatives,omitempty"`

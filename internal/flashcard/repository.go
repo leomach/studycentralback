@@ -26,6 +26,25 @@ func (r *Repository) List(userID uint, subjectID uint, limit int) ([]Flashcard, 
 	return cards, err
 }
 
+// ReviewsByFlashcardID busca as reviews dos cards informados de uma vez (uma
+// query, não uma por card) para a listagem embutir o estado de cada um.
+func (r *Repository) ReviewsByFlashcardID(userID uint, flashcardIDs []uint) (map[uint]Review, error) {
+	byID := make(map[uint]Review, len(flashcardIDs))
+	if len(flashcardIDs) == 0 {
+		return byID, nil
+	}
+
+	var reviews []Review
+	err := r.db.Where("user_id = ? AND flashcard_id IN ?", userID, flashcardIDs).Find(&reviews).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, rv := range reviews {
+		byID[rv.FlashcardID] = rv
+	}
+	return byID, nil
+}
+
 // Create grava o card e o estado inicial do SM-2 na mesma transação: um card
 // sem linha de review nunca apareceria na fila.
 func (r *Repository) Create(card *Flashcard, now time.Time) error {
@@ -77,6 +96,7 @@ func (r *Repository) DueCards(userID uint, now time.Time, limit int) ([]Due, err
 		Table("flashcards").
 		Select("flashcards.id AS flashcard_id, flashcards.subject_id, flashcards.kind, "+
 			"flashcards.front, flashcards.back, flashcard_reviews.due_date, "+
+			"flashcard_reviews.interval_days, flashcard_reviews.ease_factor, "+
 			"flashcard_reviews.lapses, flashcard_reviews.reps").
 		Joins("JOIN flashcard_reviews ON flashcard_reviews.flashcard_id = flashcards.id").
 		Where("flashcards.user_id = ? AND flashcard_reviews.due_date <= ?", userID, now).

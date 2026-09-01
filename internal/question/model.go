@@ -94,5 +94,10 @@ type Attempt struct {
 	Answer     string     `json:"answer"`
 	IsCorrect  bool       `json:"is_correct"`
 	Confidence Confidence `json:"confidence"`
-	CreatedAt  time.Time  `json:"created_at"`
+	// ClientID é a chave de idempotência gerada pelo app: o outbox offline
+	// pode reenviar a mesma tentativa se a sincronização for interrompida
+	// antes da confirmação, e o índice único no banco garante que isso não
+	// duplica a linha.
+	ClientID  string    `json:"-" gorm:"column:client_id"`
+	CreatedAt time.Time `json:"created_at"`
 }

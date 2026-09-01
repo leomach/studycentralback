@@ -1,8 +1,11 @@
 package question
 
 import (
+	"errors"
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
 
 	"github.com/leomach/studycentralback/internal/catalog"
 	"github.com/leomach/studycentralback/internal/platform"
@@ -69,9 +72,22 @@ func (s *Service) Create(userID uint, in NewQuestion) (Question, error) {
 
 // Answer registra a tentativa. A correção é feita no servidor, comparando com
 // a resposta guardada — o cliente nunca diz se acertou.
-func (s *Service) Answer(userID, questionID uint, answer string, confidence Confidence) (Attempt, error) {
+//
+// clientID é a chave de idempotência do outbox offline do PWA: se a mesma
+// tentativa chegar duas vezes (sincronização interrompida e reenviada), a
+// segunda chamada devolve a tentativa já gravada em vez de duplicá-la.
+func (s *Service) Answer(userID, questionID uint, clientID, answer string, confidence Confidence) (Attempt, error) {
+	if strings.TrimSpace(clientID) == "" {
+		return Attempt{}, platform.Invalid("client_id é obrigatório")
+	}
 	if !confidence.Valid() {
 		return Attempt{}, platform.Invalid("confidence deve ser certeza, duvida ou chute")
+	}
+
+	if existing, err := s.repo.FindAttemptByClientID(userID, clientID); err == nil {
+		return existing, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return Attempt{}, err
 	}
 
 	q, err := s.repo.FindByID(userID, questionID)
@@ -85,8 +101,15 @@ func (s *Service) Answer(userID, questionID uint, answer string, confidence Conf
 		Answer:     answer,
 		IsCorrect:  strings.EqualFold(strings.TrimSpace(answer), strings.TrimSpace(q.CorrectAnswer)),
 		Confidence: confidence,
+		ClientID:   clientID,
 	}
 	if err := s.repo.CreateAttempt(&attempt); err != nil {
+		// Corrida rara entre o SELECT acima e este INSERT (ex.: duas abas
+		// sincronizando ao mesmo tempo): o índice único pegou primeiro:
+		// devolve a linha que já está lá em vez de propagar o erro.
+		if platform.IsUniqueViolation(err) {
+			return s.repo.FindAttemptByClientID(userID, clientID)
+		}
 		return Attempt{}, err
 	}
 	return attempt, nil

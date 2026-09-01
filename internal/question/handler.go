@@ -28,6 +28,8 @@ func (h *Handler) list(c *gin.Context) {
 	f := ListFilter{
 		SubjectID: uintQuery(c, "subject_id"),
 		BancaID:   uintQuery(c, "banca_id"),
+		ExamID:    uintQuery(c, "exam_id"),
+		Format:    Format(c.Query("format")),
 		Limit:     intQuery(c, "limit", 50),
 	}
 
@@ -71,13 +73,14 @@ func (h *Handler) answer(c *gin.Context) {
 	var body struct {
 		Answer     string     `json:"answer"`
 		Confidence Confidence `json:"confidence"`
+		ClientID   string     `json:"client_id"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		platform.Fail(c, platform.Invalid(err.Error()))
 		return
 	}
 
-	attempt, err := h.svc.Answer(platform.UserID(c), id, body.Answer, body.Confidence)
+	attempt, err := h.svc.Answer(platform.UserID(c), id, body.ClientID, body.Answer, body.Confidence)
 	if err != nil {
 		platform.Fail(c, err)
 		return
