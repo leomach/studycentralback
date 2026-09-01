@@ -73,9 +73,12 @@ func (a *Alternatives) Scan(src any) error {
 	}
 }
 
+// Question é compartilhada entre todas as contas (ver plano de multi-tenancy):
+// o gabarito de uma prova é o mesmo pra quem quer que a esteja estudando, por
+// isso não carrega user_id. Attempt, logo abaixo, é o oposto — é a resposta
+// de UM usuário, sempre privada.
 type Question struct {
 	ID            uint         `gorm:"primaryKey" json:"id"`
-	UserID        uint         `json:"-"`
 	SubjectID     uint         `json:"subject_id"`
 	BancaID       *uint        `json:"banca_id,omitempty"`
 	ExamID        *uint        `json:"exam_id,omitempty"`

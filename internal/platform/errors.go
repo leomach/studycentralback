@@ -16,9 +16,12 @@ import (
 type ErrorKind string
 
 const (
-	KindInvalid  ErrorKind = "invalid"   // 400 — dado errado no pedido
-	KindNotFound ErrorKind = "not_found" // 404 — não existe (ou não é seu)
-	KindConflict ErrorKind = "conflict"  // 409 — esbarrou em dados em uso
+	KindInvalid      ErrorKind = "invalid"      // 400 — dado errado no pedido
+	KindUnauthorized ErrorKind = "unauthorized" // 401 — sem token válido
+	KindForbidden    ErrorKind = "forbidden"    // 403 — autenticado, mas sem permissão
+	KindNotFound     ErrorKind = "not_found"    // 404 — não existe (ou não é seu)
+	KindConflict     ErrorKind = "conflict"     // 409 — esbarrou em dados em uso
+	KindRateLimited  ErrorKind = "rate_limited" // 429 — muitas tentativas
 )
 
 // DomainError é o erro que um domínio devolve quando sabe o que aconteceu.
@@ -34,14 +37,20 @@ type DomainError struct {
 
 func (e *DomainError) Error() string { return e.Msg }
 
-func Invalid(msg string) error  { return &DomainError{Kind: KindInvalid, Msg: msg} }
-func NotFound(msg string) error { return &DomainError{Kind: KindNotFound, Msg: msg} }
-func Conflict(msg string) error { return &DomainError{Kind: KindConflict, Msg: msg} }
+func Invalid(msg string) error         { return &DomainError{Kind: KindInvalid, Msg: msg} }
+func Unauthorized(msg string) error    { return &DomainError{Kind: KindUnauthorized, Msg: msg} }
+func Forbidden(msg string) error       { return &DomainError{Kind: KindForbidden, Msg: msg} }
+func NotFound(msg string) error        { return &DomainError{Kind: KindNotFound, Msg: msg} }
+func Conflict(msg string) error        { return &DomainError{Kind: KindConflict, Msg: msg} }
+func TooManyRequests(msg string) error { return &DomainError{Kind: KindRateLimited, Msg: msg} }
 
 var kindStatus = map[ErrorKind]int{
-	KindInvalid:  http.StatusBadRequest,
-	KindNotFound: http.StatusNotFound,
-	KindConflict: http.StatusConflict,
+	KindInvalid:      http.StatusBadRequest,
+	KindUnauthorized: http.StatusUnauthorized,
+	KindForbidden:    http.StatusForbidden,
+	KindNotFound:     http.StatusNotFound,
+	KindConflict:     http.StatusConflict,
+	KindRateLimited:  http.StatusTooManyRequests,
 }
 
 // Fail traduz um erro em resposta HTTP. É o único lugar do sistema que decide

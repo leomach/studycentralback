@@ -14,22 +14,22 @@ func NewService(repo *Repository) *Service { return &Service{repo: repo} }
 
 // --- subjects ---
 
-func (s *Service) ListSubjects(userID uint) ([]Subject, error) {
-	return s.repo.ListSubjects(userID)
+func (s *Service) ListSubjects() ([]Subject, error) {
+	return s.repo.ListSubjects()
 }
 
-func (s *Service) CreateSubject(userID uint, name string, parentID *uint) (Subject, error) {
+func (s *Service) CreateSubject(name string, parentID *uint) (Subject, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return Subject{}, platform.Invalid("nome é obrigatório")
 	}
 	if parentID != nil {
-		if err := s.requireSubject(userID, *parentID); err != nil {
+		if err := s.requireSubject(*parentID); err != nil {
 			return Subject{}, err
 		}
 	}
 
-	subject := Subject{UserID: userID, Name: name, ParentID: parentID}
+	subject := Subject{Name: name, ParentID: parentID}
 	if err := s.repo.CreateSubject(&subject); err != nil {
 		return Subject{}, err
 	}
@@ -45,8 +45,8 @@ type SubjectPatch struct {
 	ParentID *uint `json:"parent_id"`
 }
 
-func (s *Service) UpdateSubject(userID, id uint, patch SubjectPatch) (Subject, error) {
-	subject, err := s.repo.FindSubject(userID, id)
+func (s *Service) UpdateSubject(id uint, patch SubjectPatch) (Subject, error) {
+	subject, err := s.repo.FindSubject(id)
 	if err != nil {
 		return Subject{}, err
 	}
@@ -66,7 +66,7 @@ func (s *Service) UpdateSubject(userID, id uint, patch SubjectPatch) (Subject, e
 		case *patch.ParentID == id:
 			return Subject{}, platform.Invalid("um eixo não pode ser pai de si mesmo")
 		default:
-			if err := s.requireSubject(userID, *patch.ParentID); err != nil {
+			if err := s.requireSubject(*patch.ParentID); err != nil {
 				return Subject{}, err
 			}
 			fields["parent_id"] = *patch.ParentID
@@ -82,8 +82,8 @@ func (s *Service) UpdateSubject(userID, id uint, patch SubjectPatch) (Subject, e
 	return subject, nil
 }
 
-func (s *Service) DeleteSubject(userID, id uint) error {
-	rows, err := s.repo.DeleteSubject(userID, id)
+func (s *Service) DeleteSubject(id uint) error {
+	rows, err := s.repo.DeleteSubject(id)
 	if err != nil {
 		return err
 	}
@@ -215,7 +215,7 @@ func (s *Service) DeleteExam(id uint) error {
 // question e flashcard chamam estes métodos antes de gravar, para que um id
 // inexistente vire 400 com mensagem clara em vez de erro de foreign key.
 
-func (s *Service) RequireSubject(userID, id uint) error { return s.requireSubject(userID, id) }
+func (s *Service) RequireSubject(id uint) error { return s.requireSubject(id) }
 
 func (s *Service) RequireBanca(id uint) error {
 	ok, err := s.repo.BancaExists(id)
@@ -239,8 +239,8 @@ func (s *Service) RequireExam(id uint) error {
 	return nil
 }
 
-func (s *Service) requireSubject(userID, id uint) error {
-	ok, err := s.repo.SubjectExists(userID, id)
+func (s *Service) requireSubject(id uint) error {
+	ok, err := s.repo.SubjectExists(id)
 	if err != nil {
 		return err
 	}

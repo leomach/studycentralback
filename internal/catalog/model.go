@@ -1,6 +1,8 @@
 // Package catalog guarda o conteúdo de referência: eixos temáticos, bancas e
 // concursos. É um domínio de conteúdo — nunca importa question, flashcard ou
-// dashboard.
+// dashboard. Compartilhado entre todas as contas: o mesmo concurso/eixo serve
+// pra qualquer usuário estudando aquele edital, então nada aqui carrega
+// user_id (ver plano de multi-tenancy).
 package catalog
 
 import "time"
@@ -10,7 +12,6 @@ import "time"
 // ponteiro nil é como se representa "coluna nula", já que uint zero-value é 0.
 type Subject struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
-	UserID    uint      `json:"-"`
 	ParentID  *uint     `json:"parent_id,omitempty"`
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"created_at"`

@@ -26,20 +26,23 @@ usuário peça.
 - **Deploy**: simples, um único VPS ou serviço tipo Fly.io/Railway. Nada de
   Kubernetes ou infraestrutura distribuída para este estágio.
 
-## Escopo do MVP — apenas 4 domínios
+## Escopo do MVP — 5 domínios
 
 O projeto foi deliberadamente reduzido de um desenho inicial mais amplo (que
-incluía legislação, edital verticalizado, ingestão automatizada, multi-tenancy)
-para o essencial. **Não reintroduza esses domínios a menos que o usuário peça
-explicitamente.**
+incluía legislação, edital verticalizado, ingestão automatizada) para o
+essencial. **Não reintroduza esses domínios a menos que o usuário peça
+explicitamente.** Multi-tenancy real (contas de verdade, autenticação, dados
+isolados por conta) foi pedido explicitamente e está implementado — não é
+mais item de fora-de-escopo.
 
 ```
 internal/
-├── platform/     # config, conexão db, router, middleware
-├── catalog/      # subject (eixo temático), banca, exam (concurso)
-├── question/     # question, attempt
-├── flashcard/    # flashcard, flashcard_review, algoritmo SM-2
-└── dashboard/    # queries agregadas de desempenho
+├── platform/     # config, conexão db, router, middleware, JWT, rate limit
+├── auth/         # contas, login/registro, refresh tokens
+├── catalog/      # subject (eixo temático), banca, exam (concurso) — compartilhado
+├── question/     # question (compartilhada), attempt (por conta)
+├── flashcard/    # flashcard, flashcard_review (por conta), algoritmo SM-2
+└── dashboard/    # queries agregadas de desempenho (por conta)
 ```
 
 Cada domínio é um pacote Go auto-contido (model + repository + service +
@@ -51,31 +54,42 @@ Regra de dependência: **domínios de estudo dependem de domínios de conteúdo,
 nunca o contrário.** `flashcard` e `question` podem ser importados por
 `dashboard`, mas `catalog`/`question` nunca importam `flashcard`/`dashboard`.
 
-## Modelo de dados (8 tabelas)
+## Modelo de dados (9 tabelas) e multi-tenancy
 
 ```sql
-users              -- id, e outros campos mínimos. Sem auth real ainda, mas
-                    -- a tabela EXISTE desde o início e toda tabela abaixo
-                    -- referencia user_id como FK real, não como inteiro solto.
-                    -- Um único registro seed (id=1) representa o Leandro.
-subjects           -- eixo temático, com parent_id para subeixos
-bancas             -- Cebraspe, FGV, FCC etc.
-exams              -- concurso (nome, banca, ano)
+users              -- name, email (único), password_hash, plan (free|premium)
+refresh_tokens     -- sessão de longa duração: token_hash, expires_at, revoked_at
+subjects           -- eixo temático, com parent_id para subeixos — COMPARTILHADO
+bancas             -- Cebraspe, FGV, FCC etc. — COMPARTILHADO
+exams              -- concurso (nome, banca, ano) — COMPARTILHADO
 questions          -- statement, alternatives (jsonb), correct_answer,
-                    -- subject_id, banca_id, exam_id, format
+                    -- subject_id, banca_id, exam_id, format — COMPARTILHADA
 attempts           -- tentativa de resposta, is_correct, confidence
                     -- (certeza | duvida | chute — campo crítico, não remover)
+                    -- POR CONTA (user_id)
 flashcards         -- front, back, kind (pergunta_resposta | resumo),
-                    -- source_question_id opcional
+                    -- source_question_id opcional — POR CONTA (user_id)
 flashcard_reviews  -- estado do algoritmo: due_date, interval_days,
-                    -- ease_factor, reps, lapses
+                    -- ease_factor, reps, lapses — POR CONTA (user_id)
 ```
 
-São 8 tabelas, exatamente essas. Se a contagem não bater com o que foi
+São 9 tabelas, exatamente essas. Se a contagem não bater com o que foi
 implementado, isso é um erro a ser sinalizado e perguntado — nunca corrigido
 silenciosamente ajustando o número ou substituindo a FK por um valor fixo
-(`DEFAULT 1` sem FK, por exemplo). `user_id` é sempre foreign key para
-`users.id`, mesmo enquanto existir um único usuário.
+(`DEFAULT 1` sem FK, por exemplo).
+
+**O que é compartilhado vs. por conta** (decidido explicitamente, não
+assumir): `subjects`/`bancas`/`exams`/`questions` não têm `user_id` — o
+conteúdo de referência e o banco de questões são os mesmos para qualquer
+conta estudando o mesmo edital. `attempts`/`flashcards`/`flashcard_reviews`
+têm `user_id` como FK real para `users.id` e toda query é filtrada por ele —
+é a resposta, o card e o progresso de UMA conta, nunca visível a outra.
+
+**Planos**: toda conta nasce `free` e não acessa nenhuma rota fora de
+`/api/auth/*` (403 em tudo o resto) — é assim "por enquanto", até existir
+cobrança de verdade. `premium` acessa tudo. Promoção hoje é manual, via
+`POST /api/admin/users/:id/plan` protegido por `ADMIN_SECRET` — não existe
+integração de pagamento ainda; se for pedida, é o próximo passo natural.
 
 Use `golang-migrate` com SQL puro versionado. Não usar `AutoMigrate` do Gorm em
 produção — apenas em desenvolvimento local, se necessário.
@@ -117,11 +131,18 @@ cuidado e iteração — mais do que qualquer CRUD.
 Não sugerir nem implementar, a menos que solicitado:
 - Legislação/versionamento de normas jurídicas
 - Edital verticalizado / cobertura de tópicos
-- Ingestão automatizada de PDFs / OCR / parsing de provas
-- Multi-tenancy real (apenas deixar `user_id` nas tabelas, sem isolamento ativo)
+- Ingestão automatizada de PDFs / OCR / parsing de provas (isso é
+  responsabilidade do projeto irmão `studycentralscraper`)
 - FSRS ou qualquer algoritmo de SRS mais sofisticado que SM-2
 - Sincronização offline com resolução de conflito (cache PWA simples resolve
   por agora)
+- Verificação de e-mail, "esqueci minha senha", listagem de sessões ativas —
+  fora do primeiro corte de autenticação, entram se pedidas
+- Papel de admin/dono sobre catálogo e questões compartilhadas — qualquer
+  conta premium pode editar/apagar qualquer eixo/banca/concurso/questão hoje;
+  risco aceito e documentado, não esquecido
+- Cobrança real (Stripe, Mercado Pago etc.) — o endpoint admin
+  (`POST /api/admin/users/:id/plan`) é o substituto temporário
 
 ## Contratos por domínio
 
@@ -132,28 +153,43 @@ um contrato (ex: `catalog` precisando importar `question`), isso é sinal para
 parar e perguntar, não para improvisar uma exceção.
 
 ### `platform`
-**Responsabilidade**: config (env vars), conexão com o banco (Gorm setup),
-router (Gin), middleware genérico (logging, recovery, CORS), `CurrentUser()`
-(hoje fixo em `user_id=1`, ponto único de mudança quando houver login real).
+**Responsabilidade**: config (env vars, incluindo `JWT_SECRET`/`ADMIN_SECRET`
+obrigatórios), conexão com o banco (Gorm setup), router (Gin), middleware
+genérico (logging, recovery, CORS), JWT (assinar/validar access token),
+rate limit em memória, e os middlewares de autorização: `RequireAuth`
+(exige token válido, grava `user_id`/`plan` no contexto), `RequirePremium`
+(403 se o plano não for premium), `RequireAdminSecret` (protege `/api/admin`).
 **Pode importar**: nada de outros domínios.
 **Não pode**: conter regra de negócio de nenhum domínio, nem SQL de domínio.
 
+### `auth`
+**Responsabilidade**: `User` (nome, email, hash de senha, plano) e
+`RefreshToken` (sessão de longa duração, revogável, guardado como hash).
+Cadastro, login, emissão/rotação de refresh token, promoção de plano.
+Login nunca diferencia "conta não existe" de "senha errada" (mensagem e
+tempo de resposta genéricos — proteção contra enumeração de e-mail). Reuso de
+um refresh token já rotacionado revoga todas as sessões daquela conta.
+**Pode importar**: `platform` (JWT, hashing não — bcrypt é usado direto aqui).
+**Não pode importar**: `catalog`, `question`, `flashcard`, `dashboard`.
+
 ### `catalog`
 **Responsabilidade**: `Subject` (eixo temático, hierárquico via `parent_id`),
-`Banca`, `Exam`. CRUD simples. É a base de dados de referência — outros
-domínios apontam pra cá, nunca o contrário.
+`Banca`, `Exam`. CRUD simples. **Compartilhado entre todas as contas** — sem
+`user_id`, é a base de dados de referência que outros domínios apontam pra cá,
+nunca o contrário.
 **Pode importar**: `platform`.
-**Não pode importar**: `question`, `flashcard`, `dashboard`. Se uma feature de
-`catalog` parecer precisar disso, o problema está em outro lugar.
+**Não pode importar**: `auth`, `question`, `flashcard`, `dashboard`. Se uma
+feature de `catalog` parecer precisar disso, o problema está em outro lugar.
 
 ### `question`
 **Responsabilidade**: `Question` (statement, alternatives jsonb,
-correct_answer, format certo_errado|multipla_escolha) e `Attempt` (tentativa,
-`is_correct`, `confidence`: certeza|duvida|chute — este campo é obrigatório,
-não opcional, porque alimenta a lógica de priorização de flashcards).
+correct_answer, format certo_errado|multipla_escolha — **compartilhada entre
+contas**, sem `user_id`) e `Attempt` (tentativa, `is_correct`, `confidence`:
+certeza|duvida|chute — este campo é obrigatório, não opcional, porque
+alimenta a lógica de priorização de flashcards — **por conta**, com `user_id`).
 **Pode importar**: `platform`, `catalog` (para validar `subject_id`, `banca_id`,
 `exam_id` existentes).
-**Não pode importar**: `flashcard`, `dashboard`.
+**Não pode importar**: `auth`, `flashcard`, `dashboard`.
 
 ### `flashcard`
 **Responsabilidade**: `Flashcard` (front, back, `kind`:
@@ -183,11 +219,16 @@ a partir de `dashboard`, o código pertence a outro lugar.
 
 ### Regra geral entre domínios
 
-`platform` ← `catalog` ← `question` ← `flashcard` ← `dashboard`
+```
+platform ← auth
+platform ← catalog ← question ← flashcard ← dashboard
+```
 
-Cada seta é "pode ser importado por". Uma importação na direção contrária
-(ex: `catalog` importando `question`) é sempre um erro de design, não uma
-exceção válida — pare e avise antes de implementar.
+`auth` e `catalog` são irmãos: os dois só dependem de `platform`, nenhum dos
+dois depende do outro. Cada seta é "pode ser importado por". Uma importação
+na direção contrária (ex: `catalog` importando `question`, ou qualquer
+domínio importando `auth`) é sempre um erro de design, não uma exceção
+válida — pare e avise antes de implementar.
 
 ## Convenções de código Go
 

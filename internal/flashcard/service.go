@@ -74,7 +74,7 @@ func (s *Service) Create(userID uint, in NewFlashcard) (Flashcard, error) {
 	if !in.Kind.Valid() {
 		return Flashcard{}, platform.Invalid("kind deve ser pergunta_resposta ou resumo")
 	}
-	if err := s.validateRefs(userID, &in.SubjectID, in.SourceQuestionID); err != nil {
+	if err := s.validateRefs(&in.SubjectID, in.SourceQuestionID); err != nil {
 		return Flashcard{}, err
 	}
 
@@ -180,7 +180,7 @@ func (s *Service) Update(userID, id uint, patch FlashcardPatch) (Flashcard, erro
 		}
 		fields["kind"] = *patch.Kind
 	}
-	if err := s.validateRefs(userID, patch.SubjectID, patch.SourceQuestionID); err != nil {
+	if err := s.validateRefs(patch.SubjectID, patch.SourceQuestionID); err != nil {
 		return Flashcard{}, err
 	}
 	if patch.SubjectID != nil {
@@ -214,17 +214,17 @@ func (s *Service) Delete(userID, id uint) error {
 	return nil
 }
 
-func (s *Service) validateRefs(userID uint, subjectID, sourceQuestionID *uint) error {
+func (s *Service) validateRefs(subjectID, sourceQuestionID *uint) error {
 	if subjectID != nil {
 		if *subjectID == 0 {
 			return platform.Invalid("subject_id é obrigatório")
 		}
-		if err := s.catalog.RequireSubject(userID, *subjectID); err != nil {
+		if err := s.catalog.RequireSubject(*subjectID); err != nil {
 			return err
 		}
 	}
 	if sourceQuestionID != nil && *sourceQuestionID != 0 {
-		if _, err := s.questions.FindByID(userID, *sourceQuestionID); err != nil {
+		if _, err := s.questions.FindByID(*sourceQuestionID); err != nil {
 			return platform.Invalid("source_question_id não existe")
 		}
 	}

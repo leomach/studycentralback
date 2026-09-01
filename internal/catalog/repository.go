@@ -12,15 +12,15 @@ func NewRepository(db *gorm.DB) *Repository { return &Repository{db: db} }
 
 // --- subjects ---
 
-func (r *Repository) ListSubjects(userID uint) ([]Subject, error) {
+func (r *Repository) ListSubjects() ([]Subject, error) {
 	var subjects []Subject
-	err := r.db.Where("user_id = ?", userID).Order("name").Find(&subjects).Error
+	err := r.db.Order("name").Find(&subjects).Error
 	return subjects, err
 }
 
-func (r *Repository) FindSubject(userID, id uint) (Subject, error) {
+func (r *Repository) FindSubject(id uint) (Subject, error) {
 	var subject Subject
-	err := r.db.Where("user_id = ? AND id = ?", userID, id).First(&subject).Error
+	err := r.db.First(&subject, id).Error
 	return subject, err
 }
 
@@ -32,13 +32,13 @@ func (r *Repository) UpdateSubject(s *Subject, fields map[string]any) error {
 	return r.db.Model(s).Updates(fields).Error
 }
 
-func (r *Repository) DeleteSubject(userID, id uint) (int64, error) {
-	res := r.db.Where("user_id = ? AND id = ?", userID, id).Delete(&Subject{})
+func (r *Repository) DeleteSubject(id uint) (int64, error) {
+	res := r.db.Delete(&Subject{}, id)
 	return res.RowsAffected, res.Error
 }
 
-func (r *Repository) SubjectExists(userID, id uint) (bool, error) {
-	return r.exists(r.db.Model(&Subject{}).Where("user_id = ? AND id = ?", userID, id))
+func (r *Repository) SubjectExists(id uint) (bool, error) {
+	return r.exists(r.db.Model(&Subject{}).Where("id = ?", id))
 }
 
 // --- bancas ---

@@ -8,10 +8,10 @@ dia que responde "tenho N minutos, o que estudo agora?".
 
 ```sh
 make db-up                       # sobe o Postgres
-cp .env.example .env
+cp .env.example .env             # gere valores reais para JWT_SECRET e ADMIN_SECRET:
+                                  #   openssl rand -base64 48
 make migrate-up                  # aplica as migrations
-set -a && source .env && set +a
-make run                         # sobe a API em :8080
+make run                         # sobe a API em :8080 (o Makefile carrega .env sozinho)
 ```
 
 ```sh
@@ -23,28 +23,52 @@ make test                        # SM-2 e fila do dia
 ```
 cmd/api/            # montagem das dependências e start do servidor
 internal/
-├── platform/       # config, conexão, router, middleware
-├── catalog/        # subject, banca, exam
-├── question/       # question, attempt
-├── flashcard/      # flashcard, review, sm2.go (algoritmo puro)
-└── dashboard/      # agregados de desempenho + queue.go (fila do dia)
+├── platform/       # config, conexão, router, middleware, JWT, rate limit
+├── auth/           # contas, login/registro, refresh tokens
+├── catalog/        # subject, banca, exam — compartilhado entre contas
+├── question/       # question (compartilhada) e attempt (por conta)
+├── flashcard/      # flashcard, review (por conta), sm2.go (algoritmo puro)
+└── dashboard/      # agregados de desempenho (por conta) + queue.go (fila do dia)
 migrations/         # SQL versionado (golang-migrate)
 ```
 
-São 8 tabelas: `users`, `subjects`, `bancas`, `exams`, `questions`,
-`attempts`, `flashcards`, `flashcard_reviews`. `users` existe desde o início
-com um registro seed (`id=1`) e todo conteúdo de estudo aponta para ele por
-foreign key real, mesmo sem autenticação ainda.
+São 9 tabelas: `users`, `refresh_tokens`, `subjects`, `bancas`, `exams`,
+`questions`, `attempts`, `flashcards`, `flashcard_reviews`.
+
+**Multi-tenancy**: `subjects`, `bancas`, `exams` e `questions` são
+compartilhadas entre todas as contas — o gabarito de uma prova é o mesmo pra
+quem quer que a esteja estudando. `attempts`, `flashcards` e
+`flashcard_reviews` são privadas por conta (`user_id`) — sua resposta, seus
+cards, seu progresso não aparecem pra ninguém além de você.
 
 Cada domínio é um pacote com model, repository, service e handler juntos. A
-dependência só anda num sentido: `dashboard` importa `question` e `flashcard`;
-o contrário nunca.
+dependência só anda num sentido: `auth` e `catalog` só dependem de `platform`;
+`dashboard` importa `question` e `flashcard`; o contrário nunca.
 
 ## Endpoints
+
+**Públicas** (sem token):
 
 | Método | Rota | O que faz |
 | --- | --- | --- |
 | GET | `/health` | healthcheck (serve de sonda de conectividade no PWA) |
+| POST | `/api/auth/register` | cadastro: `name`, `email`, `password` (mín. 10 caracteres) |
+| POST | `/api/auth/login` | `email` + `password` → `{access_token, refresh_token}` |
+| POST | `/api/auth/refresh` | troca um `refresh_token` por um par novo (rotação a cada uso) |
+| POST | `/api/auth/logout` | revoga um `refresh_token` |
+
+`register`/`login` têm rate limit por IP (5 tentativas / 15 min).
+
+**Administrativas** (header `X-Admin-Secret`, ver `ADMIN_SECRET`):
+
+| Método | Rota | O que faz |
+| --- | --- | --- |
+| POST | `/api/admin/users/:id/plan` | promove a conta a premium — substituto temporário até existir cobrança real |
+
+**Protegidas** (header `Authorization: Bearer <access_token>`, exige plano `premium` — `free` recebe 403 em tudo abaixo, por enquanto):
+
+| Método | Rota | O que faz |
+| --- | --- | --- |
 | GET/POST | `/api/subjects` | eixos temáticos (aceita `parent_id`) |
 | PATCH/DELETE | `/api/subjects/:id` | editar / remover |
 | GET/POST | `/api/bancas` | bancas |
@@ -107,9 +131,28 @@ Toda falha responde `{"error": "...", "code": "..."}`:
 | Status | `code` | Quando |
 | --- | --- | --- |
 | 400 | `invalid` | dado errado no pedido (`subject_id não existe`, campo obrigatório vazio) |
+| 401 | `unauthorized` | token ausente/inválido/expirado, ou login/refresh recusado |
+| 403 | `forbidden` | autenticado, mas plano não permite (hoje: qualquer coisa fora de `/auth/*` no plano free) |
 | 404 | `not_found` | não existe — o app pode tirar do cache |
-| 409 | `conflict` | está em uso (apagar um eixo que ainda tem questões) |
+| 409 | `conflict` | está em uso (apagar um eixo que ainda tem questões; email já cadastrado) |
+| 429 | `rate_limited` | muitas tentativas de login/cadastro pelo mesmo IP |
 | 500 | `internal` | erro inesperado; o detalhe fica no log do servidor, nunca na resposta |
+
+## Autenticação e planos
+
+Contas nascem no plano `free` e não acessam nada além de `/auth/*` — é assim
+"por enquanto", até existir cobrança de verdade. Promover alguém a `premium`
+hoje é manual: `POST /api/admin/users/:id/plan` com o header
+`X-Admin-Secret: $ADMIN_SECRET`.
+
+Sessão: access token JWT curto (15 min, assinado com `JWT_SECRET`) + refresh
+token de 30 dias, revogável, guardado como hash no banco. Cada uso do refresh
+token o substitui por um novo (rotação) — reusar um token já trocado é
+tratado como sinal de vazamento e derruba todas as sessões daquela conta.
+
+Login nunca diferencia "conta não existe" de "senha errada" — mesma
+mensagem, mesmo tempo de resposta — para não permitir descobrir quais
+e-mails estão cadastrados.
 
 ## As duas peças que importam
 
@@ -120,4 +163,11 @@ nelas.
 A fila combina três critérios, nesta ordem de peso: vencimento do card, eixo
 pouco estudado e histórico de erro. Cada item volta com `reasons` explicando
 por que entrou — fila que não se explica não ganha confiança.
-# studycentralback
+
+## Importar questões em lote
+
+Quem faz isso é o `studycentralscraper` (projeto irmão, fora deste repo — ver
+`../studycentralscraper/README.md`): raspa provas, gera um CSV, e importa via
+HTTP contra estes mesmos endpoints. Este repo não sabe nada sobre scraping nem
+sobre CSV — só expõe a API que qualquer cliente (esse importer incluído)
+consome.

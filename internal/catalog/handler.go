@@ -35,7 +35,7 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 }
 
 func (h *Handler) listSubjects(c *gin.Context) {
-	subjects, err := h.svc.ListSubjects(platform.UserID(c))
+	subjects, err := h.svc.ListSubjects()
 	if err != nil {
 		platform.Fail(c, err)
 		return
@@ -53,7 +53,7 @@ func (h *Handler) createSubject(c *gin.Context) {
 		return
 	}
 
-	subject, err := h.svc.CreateSubject(platform.UserID(c), body.Name, body.ParentID)
+	subject, err := h.svc.CreateSubject(body.Name, body.ParentID)
 	if err != nil {
 		platform.Fail(c, err)
 		return
@@ -73,7 +73,7 @@ func (h *Handler) updateSubject(c *gin.Context) {
 		return
 	}
 
-	subject, err := h.svc.UpdateSubject(platform.UserID(c), id, patch)
+	subject, err := h.svc.UpdateSubject(id, patch)
 	if err != nil {
 		platform.Fail(c, err)
 		return
@@ -86,7 +86,7 @@ func (h *Handler) deleteSubject(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.svc.DeleteSubject(platform.UserID(c), id); err != nil {
+	if err := h.svc.DeleteSubject(id); err != nil {
 		platform.Fail(c, err)
 		return
 	}

@@ -33,7 +33,7 @@ func (h *Handler) list(c *gin.Context) {
 		Limit:     intQuery(c, "limit", 50),
 	}
 
-	questions, err := h.svc.List(platform.UserID(c), f)
+	questions, err := h.svc.List(f)
 	if err != nil {
 		platform.Fail(c, err)
 		return
@@ -56,7 +56,7 @@ func (h *Handler) create(c *gin.Context) {
 		return
 	}
 
-	q, err := h.svc.Create(platform.UserID(c), NewQuestion(body))
+	q, err := h.svc.Create(NewQuestion(body))
 	if err != nil {
 		platform.Fail(c, err)
 		return
@@ -94,7 +94,7 @@ func (h *Handler) find(c *gin.Context) {
 		return
 	}
 
-	q, err := h.svc.FindByID(platform.UserID(c), id)
+	q, err := h.svc.FindByID(id)
 	if err != nil {
 		platform.Fail(c, err)
 		return
@@ -114,7 +114,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 
-	q, err := h.svc.Update(platform.UserID(c), id, patch)
+	q, err := h.svc.Update(id, patch)
 	if err != nil {
 		platform.Fail(c, err)
 		return
@@ -127,7 +127,7 @@ func (h *Handler) delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.svc.Delete(platform.UserID(c), id); err != nil {
+	if err := h.svc.Delete(id); err != nil {
 		platform.Fail(c, err)
 		return
 	}

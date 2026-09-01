@@ -1,8 +1,10 @@
 package platform
 
 import (
+	"crypto/subtle"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -18,25 +20,68 @@ func RequestLogger() gin.HandlerFunc {
 	}
 }
 
-// CurrentUser é o placeholder do dono dos dados. O MVP é monousuário: as
-// tabelas já carregam user_id, mas não há isolamento ativo nem autenticação.
-// Quando houver login de verdade, só este middleware precisa mudar.
-const singleUserID uint = 1
-
-func CurrentUser() gin.HandlerFunc {
+// RequireAuth exige um access token válido em "Authorization: Bearer <token>".
+// Sem ele, a request nem chega ao handler — 401 direto. Grava user_id e plan
+// no contexto do Gin, lidos depois por UserID e RequirePremium.
+func RequireAuth(cfg Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Set("user_id", singleUserID)
+		header := c.GetHeader("Authorization")
+		token, ok := strings.CutPrefix(header, "Bearer ")
+		if !ok || token == "" {
+			Fail(c, Unauthorized("token de acesso ausente"))
+			return
+		}
+
+		claims, err := ParseAccessToken(token, cfg.JWTSecret)
+		if err != nil {
+			Fail(c, Unauthorized("token de acesso inválido ou expirado"))
+			return
+		}
+
+		c.Set("user_id", claims.UserID)
+		c.Set("plan", claims.Plan)
 		c.Next()
 	}
 }
 
+// RequirePremium bloqueia contas do plano free. Roda sempre depois de
+// RequireAuth — sem plan no contexto, nega por padrão (falha fechada, não
+// aberta: um erro de ordem de middleware bloqueia acesso em vez de liberar).
+func RequirePremium() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		plan, _ := c.Get("plan")
+		if plan != "premium" {
+			Fail(c, Forbidden("este recurso exige plano premium"))
+			return
+		}
+		c.Next()
+	}
+}
+
+// RequireAdminSecret protege as rotas administrativas (hoje, só promover uma
+// conta a premium — não existe cobrança real ainda). ConstantTimeCompare
+// evita que o tempo de resposta vaze quantos caracteres do segredo bateram.
+func RequireAdminSecret(cfg Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		given := c.GetHeader("X-Admin-Secret")
+		if subtle.ConstantTimeCompare([]byte(given), []byte(cfg.AdminSecret)) != 1 {
+			Fail(c, Unauthorized("secret de admin inválido"))
+			return
+		}
+		c.Next()
+	}
+}
+
+// UserID lê o usuário autenticado gravado por RequireAuth. Só é chamado por
+// rotas que passam por esse middleware — não existe mais um fallback
+// silencioso para um usuário fixo.
 func UserID(c *gin.Context) uint {
 	if v, ok := c.Get("user_id"); ok {
 		if id, ok := v.(uint); ok {
 			return id
 		}
 	}
-	return singleUserID
+	return 0
 }
 
 // CORS libera a origem do PWA. Escrito à mão em vez de usar gin-contrib/cors:

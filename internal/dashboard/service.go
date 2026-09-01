@@ -46,7 +46,7 @@ func (s *Service) Queue(userID uint, minutes int) ([]QueueItem, error) {
 		return nil, err
 	}
 
-	subjectNames, err := s.subjectNames(userID)
+	subjectNames, err := s.subjectNames()
 	if err != nil {
 		return nil, err
 	}
@@ -101,8 +101,8 @@ func (s *Service) Queue(userID uint, minutes int) ([]QueueItem, error) {
 
 // subjectNames monta o mapa id -> nome. A fila e o overview devolvem o nome
 // junto para o app não precisar cruzar ids em toda tela.
-func (s *Service) subjectNames(userID uint) (map[uint]string, error) {
-	subjects, err := s.catalog.ListSubjects(userID)
+func (s *Service) subjectNames() (map[uint]string, error) {
+	subjects, err := s.catalog.ListSubjects()
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +199,7 @@ func (s *Service) Overview(userID uint) (Overview, error) {
 		return Overview{}, err
 	}
 
-	subjectNames, err := s.subjectNames(userID)
+	subjectNames, err := s.subjectNames()
 	if err != nil {
 		return Overview{}, err
 	}

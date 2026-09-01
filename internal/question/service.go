@@ -23,8 +23,8 @@ func NewService(repo *Repository, catalogSvc *catalog.Service) *Service {
 	return &Service{repo: repo, catalog: catalogSvc}
 }
 
-func (s *Service) List(userID uint, f ListFilter) ([]Question, error) {
-	return s.repo.List(userID, f)
+func (s *Service) List(f ListFilter) ([]Question, error) {
+	return s.repo.List(f)
 }
 
 type NewQuestion struct {
@@ -37,7 +37,7 @@ type NewQuestion struct {
 	CorrectAnswer string
 }
 
-func (s *Service) Create(userID uint, in NewQuestion) (Question, error) {
+func (s *Service) Create(in NewQuestion) (Question, error) {
 	if strings.TrimSpace(in.Statement) == "" {
 		return Question{}, platform.Invalid("enunciado é obrigatório")
 	}
@@ -50,12 +50,11 @@ func (s *Service) Create(userID uint, in NewQuestion) (Question, error) {
 	if !in.Format.Valid() {
 		return Question{}, platform.Invalid("format deve ser multipla_escolha ou certo_errado")
 	}
-	if err := s.validateRefs(userID, &in.SubjectID, in.BancaID, in.ExamID); err != nil {
+	if err := s.validateRefs(&in.SubjectID, in.BancaID, in.ExamID); err != nil {
 		return Question{}, err
 	}
 
 	q := Question{
-		UserID:        userID,
 		SubjectID:     in.SubjectID,
 		BancaID:       in.BancaID,
 		ExamID:        in.ExamID,
@@ -90,7 +89,7 @@ func (s *Service) Answer(userID, questionID uint, clientID, answer string, confi
 		return Attempt{}, err
 	}
 
-	q, err := s.repo.FindByID(userID, questionID)
+	q, err := s.repo.FindByID(questionID)
 	if err != nil {
 		return Attempt{}, err
 	}
@@ -135,8 +134,8 @@ func (s *Service) AttemptVolume(userID uint, now time.Time) (Volume, error) {
 	return s.repo.AttemptVolume(userID, now)
 }
 
-func (s *Service) FindByID(userID, id uint) (Question, error) {
-	return s.repo.FindByID(userID, id)
+func (s *Service) FindByID(id uint) (Question, error) {
+	return s.repo.FindByID(id)
 }
 
 // QuestionPatch traz só o que muda; nil significa "não enviado".
@@ -151,8 +150,8 @@ type QuestionPatch struct {
 	CorrectAnswer *string       `json:"correct_answer"`
 }
 
-func (s *Service) Update(userID, id uint, patch QuestionPatch) (Question, error) {
-	q, err := s.repo.FindByID(userID, id)
+func (s *Service) Update(id uint, patch QuestionPatch) (Question, error) {
+	q, err := s.repo.FindByID(id)
 	if err != nil {
 		return Question{}, err
 	}
@@ -181,7 +180,7 @@ func (s *Service) Update(userID, id uint, patch QuestionPatch) (Question, error)
 	if patch.Alternatives != nil {
 		fields["alternatives"] = *patch.Alternatives
 	}
-	if err := s.validateRefs(userID, patch.SubjectID, patch.BancaID, patch.ExamID); err != nil {
+	if err := s.validateRefs(patch.SubjectID, patch.BancaID, patch.ExamID); err != nil {
 		return Question{}, err
 	}
 	if patch.SubjectID != nil {
@@ -203,8 +202,8 @@ func (s *Service) Update(userID, id uint, patch QuestionPatch) (Question, error)
 	return q, nil
 }
 
-func (s *Service) Delete(userID, id uint) error {
-	rows, err := s.repo.Delete(userID, id)
+func (s *Service) Delete(id uint) error {
+	rows, err := s.repo.Delete(id)
 	if err != nil {
 		return err
 	}
@@ -216,12 +215,12 @@ func (s *Service) Delete(userID, id uint) error {
 
 // validateRefs confere que os ids apontados existem. subjectID obrigatório
 // quando informado; banca e exam são opcionais e 0 significa "sem vínculo".
-func (s *Service) validateRefs(userID uint, subjectID, bancaID, examID *uint) error {
+func (s *Service) validateRefs(subjectID, bancaID, examID *uint) error {
 	if subjectID != nil {
 		if *subjectID == 0 {
 			return platform.Invalid("subject_id é obrigatório")
 		}
-		if err := s.catalog.RequireSubject(userID, *subjectID); err != nil {
+		if err := s.catalog.RequireSubject(*subjectID); err != nil {
 			return err
 		}
 	}

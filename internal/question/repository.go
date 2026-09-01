@@ -20,8 +20,8 @@ type ListFilter struct {
 	Limit     int
 }
 
-func (r *Repository) List(userID uint, f ListFilter) ([]Question, error) {
-	q := r.db.Where("user_id = ?", userID)
+func (r *Repository) List(f ListFilter) ([]Question, error) {
+	q := r.db.Model(&Question{})
 	if f.SubjectID != 0 {
 		q = q.Where("subject_id = ?", f.SubjectID)
 	}
@@ -43,9 +43,9 @@ func (r *Repository) List(userID uint, f ListFilter) ([]Question, error) {
 	return questions, err
 }
 
-func (r *Repository) FindByID(userID, id uint) (Question, error) {
+func (r *Repository) FindByID(id uint) (Question, error) {
 	var question Question
-	err := r.db.Where("user_id = ? AND id = ?", userID, id).First(&question).Error
+	err := r.db.First(&question, id).Error
 	return question, err
 }
 
@@ -55,8 +55,8 @@ func (r *Repository) Update(q *Question, fields map[string]any) error {
 	return r.db.Model(q).Updates(fields).Error
 }
 
-func (r *Repository) Delete(userID, id uint) (int64, error) {
-	res := r.db.Where("user_id = ? AND id = ?", userID, id).Delete(&Question{})
+func (r *Repository) Delete(id uint) (int64, error) {
+	res := r.db.Delete(&Question{}, id)
 	return res.RowsAffected, res.Error
 }
 
@@ -105,16 +105,17 @@ type QueueCandidate struct {
 	CorrectAnswer string       `json:"correct_answer"`
 }
 
-// Candidates traz as questões elegíveis para a fila, as nunca respondidas
-// primeiro. O corte fino de prioridade é do BuildQueue, não daqui.
+// Candidates traz TODAS as questões compartilhadas (não só as de um usuário),
+// com a contagem de tentativas DAQUELE usuário em cada uma — "nunca
+// respondidas [por mim]" primeiro. O corte fino de prioridade é do
+// BuildQueue, não daqui.
 func (r *Repository) Candidates(userID uint, limit int) ([]QueueCandidate, error) {
 	q := r.db.
 		Table("questions").
 		Select("questions.id, questions.subject_id, questions.banca_id, questions.exam_id, "+
 			"questions.format, questions.statement, questions.alternatives, "+
 			"questions.correct_answer, COUNT(attempts.id) AS attempts").
-		Joins("LEFT JOIN attempts ON attempts.question_id = questions.id AND attempts.user_id = questions.user_id").
-		Where("questions.user_id = ?", userID).
+		Joins("LEFT JOIN attempts ON attempts.question_id = questions.id AND attempts.user_id = ?", userID).
 		Group("questions.id, questions.subject_id, questions.banca_id, questions.exam_id, " +
 			"questions.format, questions.statement, questions.alternatives, " +
 			"questions.correct_answer").
