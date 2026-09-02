@@ -75,15 +75,32 @@ dependência só anda num sentido: `auth` e `catalog` só dependem de `platform`
 | PATCH/DELETE | `/api/bancas/:id` | editar / remover |
 | GET/POST | `/api/exams` | concursos |
 | PATCH/DELETE | `/api/exams/:id` | editar / remover |
-| GET/POST | `/api/questions` | questões (filtros `subject_id`, `banca_id`, `limit`) |
+| GET/POST | `/api/questions` | questões (filtros `subject_id`, `banca_id`, `exam_id`, `format`; paginado — ver abaixo) |
 | GET/PATCH/DELETE | `/api/questions/:id` | ler / editar / remover |
 | POST | `/api/questions/:id/attempts` | responde: `answer` + `confidence` |
-| GET/POST | `/api/flashcards` | cards |
+| GET/POST | `/api/flashcards` | cards (filtro `subject_id`; paginado — ver abaixo) |
 | GET | `/api/flashcards/due` | cards vencidos |
 | GET/PATCH/DELETE | `/api/flashcards/:id` | ler / editar / remover |
 | POST | `/api/flashcards/:id/reviews` | autoavaliação: `grade` de 1 a 4 |
 | **GET** | **`/api/study/queue?minutes=40`** | **a fila do dia** |
 | GET | `/api/dashboard/overview` | acerto por eixo e por concurso, cards vencidos vs. maduros, confiança e volume de 7/30 dias |
+
+### Paginação de `/api/questions` e `/api/flashcards`
+
+As duas únicas listas que crescem sem limite (o resto — eixos, bancas,
+concursos — é pequeno e cabe inteiro numa resposta). Query params `limit`
+(padrão 20, teto 100) e `offset` (padrão 0). O corpo não é mais um array
+solto, é um envelope com o total que bate com o filtro (sem limit/offset),
+para o cliente saber quanto falta:
+
+```json
+{ "items": [...], "total": 142, "limit": 20, "offset": 0 }
+```
+
+Página seguinte: repetir a chamada com `offset` = `offset + len(items)` da
+página anterior, até `offset + len(items) >= total`. `GET /api/flashcards/due`
+continua sem paginação de propósito: é uma lista já orçada por `limit` para o
+prefetch da sessão do dia, não uma tela de navegação.
 
 ### A fila do dia é autossuficiente
 

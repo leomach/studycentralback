@@ -18,10 +18,13 @@ type ListFilter struct {
 	ExamID    uint
 	Format    Format
 	Limit     int
+	Offset    int
 }
 
-func (r *Repository) List(f ListFilter) ([]Question, error) {
-	q := r.db.Model(&Question{})
+// applyFilters isola o WHERE compartilhado por List e Count: os dois
+// precisam enxergar exatamente o mesmo recorte, senão o total paginado
+// mostrado na UI não bate com o que List devolve.
+func (r *Repository) applyFilters(q *gorm.DB, f ListFilter) *gorm.DB {
 	if f.SubjectID != 0 {
 		q = q.Where("subject_id = ?", f.SubjectID)
 	}
@@ -34,13 +37,29 @@ func (r *Repository) List(f ListFilter) ([]Question, error) {
 	if f.Format != "" {
 		q = q.Where("format = ?", f.Format)
 	}
+	return q
+}
+
+func (r *Repository) List(f ListFilter) ([]Question, error) {
+	q := r.applyFilters(r.db.Model(&Question{}), f)
 	if f.Limit > 0 {
 		q = q.Limit(f.Limit)
+	}
+	if f.Offset > 0 {
+		q = q.Offset(f.Offset)
 	}
 
 	var questions []Question
 	err := q.Order("id desc").Find(&questions).Error
 	return questions, err
+}
+
+// Count devolve quantas questões batem com o filtro, sem limit/offset — é o
+// que permite a UI saber quanto falta carregar ("carregar mais").
+func (r *Repository) Count(f ListFilter) (int64, error) {
+	var n int64
+	err := r.applyFilters(r.db.Model(&Question{}), f).Count(&n).Error
+	return n, err
 }
 
 func (r *Repository) FindByID(id uint) (Question, error) {

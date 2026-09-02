@@ -12,7 +12,7 @@ type Repository struct {
 
 func NewRepository(db *gorm.DB) *Repository { return &Repository{db: db} }
 
-func (r *Repository) List(userID uint, subjectID uint, limit int) ([]Flashcard, error) {
+func (r *Repository) List(userID uint, subjectID uint, limit, offset int) ([]Flashcard, error) {
 	q := r.db.Where("user_id = ?", userID)
 	if subjectID != 0 {
 		q = q.Where("subject_id = ?", subjectID)
@@ -20,10 +20,25 @@ func (r *Repository) List(userID uint, subjectID uint, limit int) ([]Flashcard, 
 	if limit > 0 {
 		q = q.Limit(limit)
 	}
+	if offset > 0 {
+		q = q.Offset(offset)
+	}
 
 	var cards []Flashcard
 	err := q.Order("id desc").Find(&cards).Error
 	return cards, err
+}
+
+// Count devolve quantos cards do usuário batem com o filtro, sem
+// limit/offset — mesmo propósito do Count em question/repository.go.
+func (r *Repository) Count(userID uint, subjectID uint) (int64, error) {
+	q := r.db.Model(&Flashcard{}).Where("user_id = ?", userID)
+	if subjectID != 0 {
+		q = q.Where("subject_id = ?", subjectID)
+	}
+	var n int64
+	err := q.Count(&n).Error
+	return n, err
 }
 
 // ReviewsByFlashcardID busca as reviews dos cards informados de uma vez (uma

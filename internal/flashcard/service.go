@@ -1,8 +1,11 @@
 package flashcard
 
 import (
+	"errors"
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
 
 	"github.com/leomach/studycentralback/internal/catalog"
 	"github.com/leomach/studycentralback/internal/platform"
@@ -27,11 +30,12 @@ func NewService(repo *Repository, catalogSvc *catalog.Service, questionSvc *ques
 
 // List devolve os cards com a review (estado do SM-2) embutida: é o que
 // permite ao front derivar o estado (vencido/aprendizado/maduro) de cada card
-// sem uma chamada por card.
-func (s *Service) List(userID, subjectID uint, limit int) ([]WithReview, error) {
-	cards, err := s.repo.List(userID, subjectID, limit)
+// sem uma chamada por card. Também devolve o total que bate com o filtro
+// (sem limit/offset), para a UI saber quanto falta carregar.
+func (s *Service) List(userID, subjectID uint, limit, offset int) ([]WithReview, int64, error) {
+	cards, err := s.repo.List(userID, subjectID, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	ids := make([]uint, len(cards))
@@ -40,7 +44,7 @@ func (s *Service) List(userID, subjectID uint, limit int) ([]WithReview, error) 
 	}
 	reviews, err := s.repo.ReviewsByFlashcardID(userID, ids)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	out := make([]WithReview, len(cards))
@@ -50,7 +54,12 @@ func (s *Service) List(userID, subjectID uint, limit int) ([]WithReview, error) 
 			out[i].Review = &rv
 		}
 	}
-	return out, nil
+
+	total, err := s.repo.Count(userID, subjectID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return out, total, nil
 }
 
 type NewFlashcard struct {
@@ -139,8 +148,24 @@ func (s *Service) Grade(userID, flashcardID uint, clientID string, g Grade) (Rev
 	return review, nil
 }
 
-func (s *Service) FindByID(userID, id uint) (Flashcard, error) {
-	return s.repo.FindByID(userID, id)
+// FindByID traz o card com a review embutida, igual List — a tela de
+// detalhe (GET /flashcards/:id) precisa de interval_days/ease_factor/reps
+// tanto quanto a listagem, e não tinha isso antes de a paginação separar
+// "buscar um card" de "buscar a lista".
+func (s *Service) FindByID(userID, id uint) (WithReview, error) {
+	card, err := s.repo.FindByID(userID, id)
+	if err != nil {
+		return WithReview{}, err
+	}
+
+	out := WithReview{Flashcard: card}
+	review, err := s.repo.FindReview(userID, card.ID)
+	if err == nil {
+		out.Review = &review
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return WithReview{}, err
+	}
+	return out, nil
 }
 
 // FlashcardPatch traz só o que muda; nil significa "não enviado".

@@ -15,6 +15,13 @@ type Handler struct {
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
+// defaultPageSize/maxPageSize governam a paginação de GET /flashcards, pelo
+// mesmo motivo do par equivalente em question/handler.go.
+const (
+	defaultPageSize = 20
+	maxPageSize     = 100
+)
+
 func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET("/flashcards", h.list)
 	r.POST("/flashcards", h.create)
@@ -29,17 +36,30 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 
 func (h *Handler) list(c *gin.Context) {
 	subjectID, _ := strconv.ParseUint(c.Query("subject_id"), 10, 64)
+
 	limit, err := strconv.Atoi(c.Query("limit"))
-	if err != nil {
-		limit = 50
+	if err != nil || limit <= 0 {
+		limit = defaultPageSize
+	}
+	if limit > maxPageSize {
+		limit = maxPageSize
+	}
+	offset, err := strconv.Atoi(c.Query("offset"))
+	if err != nil || offset < 0 {
+		offset = 0
 	}
 
-	cards, err := h.svc.List(platform.UserID(c), uint(subjectID), limit)
+	cards, total, err := h.svc.List(platform.UserID(c), uint(subjectID), limit, offset)
 	if err != nil {
 		platform.Fail(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, cards)
+	c.JSON(http.StatusOK, gin.H{
+		"items":  cards,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
 }
 
 func (h *Handler) create(c *gin.Context) {

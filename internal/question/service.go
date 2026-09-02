@@ -23,8 +23,18 @@ func NewService(repo *Repository, catalogSvc *catalog.Service) *Service {
 	return &Service{repo: repo, catalog: catalogSvc}
 }
 
-func (s *Service) List(f ListFilter) ([]Question, error) {
-	return s.repo.List(f)
+// List devolve a página pedida mais o total que bate com o filtro (sem
+// limit/offset), para a UI saber quanto falta e oferecer "carregar mais".
+func (s *Service) List(f ListFilter) ([]Question, int64, error) {
+	items, err := s.repo.List(f)
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.repo.Count(f)
+	if err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
 }
 
 type NewQuestion struct {

@@ -15,6 +15,14 @@ type Handler struct {
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
+// defaultPageSize/maxPageSize governam a paginação de GET /questions: sem
+// isso, um catálogo de questões que cresce sem limite acabaria devolvendo a
+// tabela inteira num único request.
+const (
+	defaultPageSize = 20
+	maxPageSize     = 100
+)
+
 func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET("/questions", h.list)
 	r.POST("/questions", h.create)
@@ -25,20 +33,38 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 }
 
 func (h *Handler) list(c *gin.Context) {
+	limit := intQuery(c, "limit", defaultPageSize)
+	if limit <= 0 {
+		limit = defaultPageSize
+	}
+	if limit > maxPageSize {
+		limit = maxPageSize
+	}
+	offset := intQuery(c, "offset", 0)
+	if offset < 0 {
+		offset = 0
+	}
+
 	f := ListFilter{
 		SubjectID: uintQuery(c, "subject_id"),
 		BancaID:   uintQuery(c, "banca_id"),
 		ExamID:    uintQuery(c, "exam_id"),
 		Format:    Format(c.Query("format")),
-		Limit:     intQuery(c, "limit", 50),
+		Limit:     limit,
+		Offset:    offset,
 	}
 
-	questions, err := h.svc.List(f)
+	questions, total, err := h.svc.List(f)
 	if err != nil {
 		platform.Fail(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, questions)
+	c.JSON(http.StatusOK, gin.H{
+		"items":  questions,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
 }
 
 func (h *Handler) create(c *gin.Context) {
