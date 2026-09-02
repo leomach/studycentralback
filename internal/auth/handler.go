@@ -32,15 +32,33 @@ func (h *Handler) RegisterPublicRoutes(r *gin.RouterGroup) {
 }
 
 // RegisterAdminRoutes espera um grupo já protegido por
-// platform.RequireAdminSecret — não faz essa checagem aqui.
+// platform.RequireAdminSecret — não faz essa checagem aqui. É deliberadamente
+// mínima: existe só para o bootstrap (conceder o primeiro papel de admin) e
+// como caminho de emergência para premium sem depender de nenhuma conta já
+// existir. O dia a dia de administrar contas vive em
+// RegisterAdminPanelRoutes, atrás de login normal — ver CLAUDE.md §"Papel de
+// administrador de contas".
 func (h *Handler) RegisterAdminRoutes(r *gin.RouterGroup) {
 	r.POST("/users/:id/plan", h.promote)
+	r.POST("/users/:id/admin", h.grantAdmin)
+	r.POST("/bootstrap-admin", h.bootstrapAdmin)
 }
 
 // RegisterProtectedRoutes espera um grupo já protegido por
 // platform.RequireAuth — não faz essa checagem aqui.
 func (h *Handler) RegisterProtectedRoutes(r *gin.RouterGroup) {
 	r.GET("/me", h.me)
+}
+
+// RegisterAdminPanelRoutes espera um grupo já protegido por
+// platform.RequireAuth + platform.RequireAdminRole — não faz essa checagem
+// aqui. É o painel de administração de contas de verdade: qualquer conta com
+// is_admin=true usa isto pelo próprio login, sem precisar do ADMIN_SECRET
+// (esse fica só para o bootstrap, ver RegisterAdminRoutes).
+func (h *Handler) RegisterAdminPanelRoutes(r *gin.RouterGroup) {
+	r.GET("/admin/users", h.listUsers)
+	r.PATCH("/admin/users/:id/plan", h.setPlan)
+	r.PATCH("/admin/users/:id/admin", h.setAdmin)
 }
 
 func (h *Handler) me(c *gin.Context) {
@@ -122,6 +140,9 @@ func (h *Handler) logout(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// promote é a rota de bootstrap/emergência (ADMIN_SECRET): sempre premium,
+// corpo ignorado de propósito — mantém a superfície do segredo compartilhado
+// mínima. Trocar o plano de alguém no dia a dia é setPlan, atrás de login.
 func (h *Handler) promote(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil || id == 0 {
@@ -129,7 +150,104 @@ func (h *Handler) promote(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.PromoteToPremium(uint(id)); err != nil {
+	if err := h.svc.SetPlan(uint(id), PlanPremium); err != nil {
+		platform.Fail(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// grantAdmin é a rota de bootstrap (ADMIN_SECRET): só concede, nunca revoga
+// — sempre is_admin=true, corpo ignorado. Revogar o papel de alguém é
+// setAdmin, feito por outro admin já autenticado pelo painel.
+func (h *Handler) grantAdmin(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		platform.Fail(c, platform.Invalid("id inválido"))
+		return
+	}
+
+	if err := h.svc.SetAdmin(uint(id), true); err != nil {
+		platform.Fail(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// bootstrapAdmin é a forma preferida de bootstrap (ADMIN_SECRET): por
+// e-mail, não por id — quem está fazendo isso é a própria pessoa dona da
+// conta, que sabe o próprio e-mail de cabeça e não tem por que já saber (ou
+// ter como descobrir facilmente) o id numérico interno. Só concede, nunca
+// revoga, igual grantAdmin (que continua existindo por id, para quem já tem
+// o id à mão ou prefere automatizar).
+func (h *Handler) bootstrapAdmin(c *gin.Context) {
+	var body struct {
+		Email string `json:"email"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		platform.Fail(c, platform.Invalid(err.Error()))
+		return
+	}
+
+	if err := h.svc.GrantAdminByEmail(body.Email); err != nil {
+		platform.Fail(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) listUsers(c *gin.Context) {
+	users, err := h.svc.ListUsers()
+	if err != nil {
+		platform.Fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, users)
+}
+
+func (h *Handler) setPlan(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		platform.Fail(c, platform.Invalid("id inválido"))
+		return
+	}
+	var body struct {
+		Plan Plan `json:"plan"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		platform.Fail(c, platform.Invalid(err.Error()))
+		return
+	}
+
+	if err := h.svc.SetPlan(uint(id), body.Plan); err != nil {
+		platform.Fail(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) setAdmin(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		platform.Fail(c, platform.Invalid("id inválido"))
+		return
+	}
+	var body struct {
+		IsAdmin bool `json:"is_admin"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		platform.Fail(c, platform.Invalid(err.Error()))
+		return
+	}
+	// Sem isto, o único admin consegue se derrubar sem querer e ficar sem
+	// nenhum jeito de voltar sem mexer no banco na mão (o ADMIN_SECRET só
+	// concede, nunca revoga — ver grantAdmin).
+	if !body.IsAdmin && platform.UserID(c) == uint(id) {
+		platform.Fail(c, platform.Invalid("você não pode remover seu próprio papel de administrador"))
+		return
+	}
+
+	if err := h.svc.SetAdmin(uint(id), body.IsAdmin); err != nil {
 		platform.Fail(c, err)
 		return
 	}

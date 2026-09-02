@@ -60,23 +60,39 @@ func main() {
 	public := router.Group("/api")
 	authHandler.RegisterPublicRoutes(public)
 
-	// Rotas protegidas: exigem token válido E plano premium. Free autentica
-	// com sucesso mas recebe 403 em qualquer coisa aqui dentro — é assim
-	// "por enquanto", até existir cobrança de verdade.
+	// Identidade: só exige token válido, não premium. "Quem sou eu" precisa
+	// responder mesmo para uma conta free (inclusive um admin free logo após
+	// o bootstrap) — senão ninguém consegue nem descobrir o próprio
+	// is_admin/plan sem já ter acesso ao que essa descoberta desbloqueia.
+	identity := router.Group("/api")
+	identity.Use(platform.RequireAuth(cfg))
+	authHandler.RegisterProtectedRoutes(identity)
+
+	// Rotas de conteúdo/estudo: exigem token válido E plano premium. Free
+	// autentica com sucesso mas recebe 403 em qualquer coisa aqui dentro — é
+	// assim "por enquanto", até existir cobrança de verdade.
 	protected := router.Group("/api")
 	protected.Use(platform.RequireAuth(cfg), platform.RequirePremium())
-	authHandler.RegisterProtectedRoutes(protected)
 	catalog.NewHandler(catalogSvc).RegisterRoutes(protected)
 	question.NewHandler(questionSvc).RegisterRoutes(protected)
 	flashcard.NewHandler(flashcardSvc).RegisterRoutes(protected)
 	dashboard.NewHandler(dashboardSvc).RegisterRoutes(protected)
 
-	// Rota administrativa: promove uma conta a premium. Substituto temporário
-	// até existir integração de pagamento de verdade — protegida por um
-	// segredo de ambiente, não por login de usuário nenhum.
+	// Rota de bootstrap: promove uma conta a premium ou concede o primeiro
+	// papel de admin. Protegida por um segredo de ambiente, não por login de
+	// usuário nenhum — uso esperado é raro, tipicamente uma vez (o primeiro
+	// admin), ou como caminho de emergência se o painel abaixo ficar
+	// inacessível por algum motivo.
 	admin := router.Group("/api/admin")
 	admin.Use(platform.RequireAdminSecret(cfg))
 	authHandler.RegisterAdminRoutes(admin)
+
+	// Painel administrativo de verdade: qualquer conta com is_admin=true usa
+	// isto pelo próprio login, sem precisar do segredo acima. Não passa por
+	// RequirePremium de propósito (ver RequireAdminRole).
+	adminPanel := router.Group("/api")
+	adminPanel.Use(platform.RequireAuth(cfg), platform.RequireAdminRole())
+	authHandler.RegisterAdminPanelRoutes(adminPanel)
 
 	log.Printf("central de estudos ouvindo em :%s (%s)", cfg.Port, cfg.Env)
 	if err := router.Run(":" + cfg.Port); err != nil {

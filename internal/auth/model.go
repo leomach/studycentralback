@@ -20,10 +20,15 @@ type User struct {
 	Email string `json:"email"`
 	// PasswordHash nunca aparece em JSON (json:"-"): mesmo sendo um hash e
 	// não a senha em si, não há razão para esse campo sair da API.
-	PasswordHash string    `json:"-"`
-	Plan         Plan      `json:"plan"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	PasswordHash string `json:"-"`
+	Plan         Plan   `json:"plan"`
+	// IsAdmin é o papel de administrar CONTAS (promover/derrubar plano,
+	// conceder o mesmo papel a outra conta) — não tem relação com o "dono do
+	// catálogo" que o CLAUDE.md documenta como fora de escopo (aquele é sobre
+	// editar eixo/banca/concurso/questão compartilhados).
+	IsAdmin   bool      `json:"is_admin"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // RefreshToken é a credencial de sessão de longa duração. Só o hash do token

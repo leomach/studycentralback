@@ -31,6 +31,20 @@ func (r *Repository) UpdatePlan(userID uint, plan Plan) (int64, error) {
 	return res.RowsAffected, res.Error
 }
 
+func (r *Repository) UpdateAdmin(userID uint, isAdmin bool) (int64, error) {
+	res := r.db.Model(&User{}).Where("id = ?", userID).Update("is_admin", isAdmin)
+	return res.RowsAffected, res.Error
+}
+
+// ListUsers devolve todas as contas, mais antiga primeiro — só o painel
+// administrativo chama isto (RequireAdminRole), então nenhum filtro por
+// user_id se aplica aqui, diferente do resto do sistema.
+func (r *Repository) ListUsers() ([]User, error) {
+	var users []User
+	err := r.db.Order("id").Find(&users).Error
+	return users, err
+}
+
 func (r *Repository) CreateRefreshToken(t *RefreshToken) error { return r.db.Create(t).Error }
 
 func (r *Repository) FindRefreshTokenByHash(hash string) (RefreshToken, error) {

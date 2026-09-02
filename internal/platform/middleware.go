@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"log"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,8 +22,9 @@ func RequestLogger() gin.HandlerFunc {
 }
 
 // RequireAuth exige um access token válido em "Authorization: Bearer <token>".
-// Sem ele, a request nem chega ao handler — 401 direto. Grava user_id e plan
-// no contexto do Gin, lidos depois por UserID e RequirePremium.
+// Sem ele, a request nem chega ao handler — 401 direto. Grava user_id, plan e
+// is_admin no contexto do Gin, lidos depois por UserID, RequirePremium e
+// RequireAdminRole.
 func RequireAuth(cfg Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader("Authorization")
@@ -40,6 +42,7 @@ func RequireAuth(cfg Config) gin.HandlerFunc {
 
 		c.Set("user_id", claims.UserID)
 		c.Set("plan", claims.Plan)
+		c.Set("is_admin", claims.IsAdmin)
 		c.Next()
 	}
 }
@@ -52,6 +55,21 @@ func RequirePremium() gin.HandlerFunc {
 		plan, _ := c.Get("plan")
 		if plan != "premium" {
 			Fail(c, Forbidden("este recurso exige plano premium"))
+			return
+		}
+		c.Next()
+	}
+}
+
+// RequireAdminRole bloqueia qualquer conta sem is_admin=true. Deliberadamente
+// não exige RequirePremium também — administrar contas não deveria depender
+// de já ser assinante, senão o primeiro admin (ainda free logo após o
+// bootstrap) ficaria trancado do próprio painel.
+func RequireAdminRole() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		isAdmin, _ := c.Get("is_admin")
+		if isAdmin != true {
+			Fail(c, Forbidden("este recurso exige papel de administrador"))
 			return
 		}
 		c.Next()
@@ -84,11 +102,21 @@ func UserID(c *gin.Context) uint {
 	return 0
 }
 
-// CORS libera a origem do PWA. Escrito à mão em vez de usar gin-contrib/cors:
-// são poucos headers e uma dependência menos para manter.
-func CORS(origin string) gin.HandlerFunc {
+// CORS libera a(s) origem(ns) do PWA. Escrito à mão em vez de usar
+// gin-contrib/cors: são poucos headers e uma dependência menos para manter.
+//
+// Reflete a origem da requisição só se ela estiver na lista permitida — não
+// ecoa um valor fixo de configuração de volta cegamente. Isso importa porque
+// "http://localhost:3000" e "http://127.0.0.1:3000" são origens DIFERENTES
+// para o navegador mesmo apontando pro mesmo servidor Next.js: um CORS_ORIGIN
+// de valor único já causou "Load failed" no fetch de quem abriu o app pela
+// origem que não batia com o valor configurado.
+func CORS(allowedOrigins []string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", origin)
+		origin := c.GetHeader("Origin")
+		if origin != "" && slices.Contains(allowedOrigins, origin) {
+			c.Header("Access-Control-Allow-Origin", origin)
+		}
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		c.Header("Access-Control-Max-Age", "86400")

@@ -12,23 +12,26 @@ import (
 // que é revogável — o access token não é.
 const AccessTokenTTL = 15 * time.Minute
 
-// Claims é o conteúdo assinado dentro do JWT. Plan viaja junto para que
-// RequirePremium não precise consultar o banco a cada request — o preço é
-// que promover alguém a premium só reflete depois que o access token atual
-// expirar (no máximo AccessTokenTTL de atraso, aceitável dado o TTL curto).
+// Claims é o conteúdo assinado dentro do JWT. Plan e IsAdmin viajam junto
+// para que RequirePremium/RequireAdminRole não precisem consultar o banco a
+// cada request — o preço é que promover alguém (a premium ou a admin) só
+// reflete depois que o access token atual expirar (no máximo AccessTokenTTL
+// de atraso, aceitável dado o TTL curto).
 type Claims struct {
-	UserID uint   `json:"uid"`
-	Plan   string `json:"plan"`
+	UserID  uint   `json:"uid"`
+	Plan    string `json:"plan"`
+	IsAdmin bool   `json:"is_admin"`
 	jwt.RegisteredClaims
 }
 
 var ErrInvalidToken = errors.New("token inválido ou expirado")
 
-func SignAccessToken(userID uint, plan, secret string) (string, error) {
+func SignAccessToken(userID uint, plan string, isAdmin bool, secret string) (string, error) {
 	now := time.Now()
 	claims := Claims{
-		UserID: userID,
-		Plan:   plan,
+		UserID:  userID,
+		Plan:    plan,
+		IsAdmin: isAdmin,
 		RegisteredClaims: jwt.RegisteredClaims{
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(AccessTokenTTL)),

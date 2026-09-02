@@ -159,8 +159,49 @@ func (s *Service) Me(userID uint) (User, error) {
 	return s.repo.FindUserByID(userID)
 }
 
-func (s *Service) PromoteToPremium(userID uint) error {
-	rows, err := s.repo.UpdatePlan(userID, PlanPremium)
+func (s *Service) ListUsers() ([]User, error) {
+	return s.repo.ListUsers()
+}
+
+// SetPlan é usado tanto pela rota de bootstrap protegida por ADMIN_SECRET
+// (sempre chamando com PlanPremium) quanto pelo painel administrativo
+// autenticado (aceita o plano vindo do corpo da requisição).
+func (s *Service) SetPlan(userID uint, plan Plan) error {
+	if !plan.Valid() {
+		return platform.Invalid("plano inválido")
+	}
+	rows, err := s.repo.UpdatePlan(userID, plan)
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return platform.NotFound("usuário não encontrado")
+	}
+	return nil
+}
+
+// GrantAdminByEmail é o bootstrap por e-mail (ver handler.bootstrapAdmin):
+// não diferencia "email não existe" de outro erro na mensagem — não é alvo
+// de força bruta como Login (a rota já exige ADMIN_SECRET antes de chegar
+// aqui), então não há razão de segurança pra generalizar a mensagem, só
+// clareza mesmo pra quem está rodando o bootstrap.
+func (s *Service) GrantAdminByEmail(email string) error {
+	email = normalizeEmail(email)
+	user, err := s.repo.FindUserByEmail(email)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return platform.NotFound("nenhuma conta com este email")
+	}
+	if err != nil {
+		return err
+	}
+	return s.SetAdmin(user.ID, true)
+}
+
+// SetAdmin concede ou revoga o papel de administrador de contas. Quem chama
+// decide as travas de negócio (ex.: não deixar alguém remover o próprio
+// papel) — aqui é só a escrita.
+func (s *Service) SetAdmin(userID uint, isAdmin bool) error {
+	rows, err := s.repo.UpdateAdmin(userID, isAdmin)
 	if err != nil {
 		return err
 	}
@@ -171,7 +212,7 @@ func (s *Service) PromoteToPremium(userID uint) error {
 }
 
 func (s *Service) issueTokenPair(user User) (TokenPair, error) {
-	access, err := platform.SignAccessToken(user.ID, string(user.Plan), s.jwtSecret)
+	access, err := platform.SignAccessToken(user.ID, string(user.Plan), user.IsAdmin, s.jwtSecret)
 	if err != nil {
 		return TokenPair{}, err
 	}

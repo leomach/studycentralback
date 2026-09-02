@@ -57,7 +57,7 @@ nunca o contrário.** `flashcard` e `question` podem ser importados por
 ## Modelo de dados (9 tabelas) e multi-tenancy
 
 ```sql
-users              -- name, email (único), password_hash, plan (free|premium)
+users              -- name, email (único), password_hash, plan (free|premium), is_admin
 refresh_tokens     -- sessão de longa duração: token_hash, expires_at, revoked_at
 subjects           -- eixo temático, com parent_id para subeixos — COMPARTILHADO
 bancas             -- Cebraspe, FGV, FCC etc. — COMPARTILHADO
@@ -87,9 +87,44 @@ têm `user_id` como FK real para `users.id` e toda query é filtrada por ele —
 
 **Planos**: toda conta nasce `free` e não acessa nenhuma rota fora de
 `/api/auth/*` (403 em tudo o resto) — é assim "por enquanto", até existir
-cobrança de verdade. `premium` acessa tudo. Promoção hoje é manual, via
-`POST /api/admin/users/:id/plan` protegido por `ADMIN_SECRET` — não existe
-integração de pagamento ainda; se for pedida, é o próximo passo natural.
+cobrança de verdade. `premium` acessa tudo. Não existe integração de
+pagamento ainda; se for pedida, é o próximo passo natural.
+
+**Papel de administrador de contas** (`is_admin`, não confundir com o "dono
+do catálogo" listado como fora de escopo abaixo — aquele é sobre editar
+eixo/banca/concurso/questão compartilhados, este é sobre administrar contas
+de outras pessoas): dois caminhos, deliberadamente separados por
+responsabilidade —
+
+1. **Bootstrap/emergência**, protegido por `ADMIN_SECRET` (segredo de
+   ambiente, não login de usuário). Três rotas: `POST
+   /api/admin/bootstrap-admin` com `{"email": "..."}` no corpo é a preferida
+   — concede admin pelo e-mail da própria conta, que quem está rodando isso
+   já sabe de cabeça, sem precisar descobrir nenhum id numérico primeiro
+   (era a fricção real antes de existir). `POST /api/admin/users/:id/plan`
+   (promove a premium) e `POST /api/admin/users/:id/admin` (concede
+   `is_admin=true`) continuam existindo por id, pra quem já tem o id à mão
+   ou prefere automatizar. Uso esperado é raro — tipicamente uma vez, para o
+   primeiro admin — ou como caminho de emergência se o painel abaixo ficar
+   inacessível. Nenhuma delas revoga nada, só concede/promove; o segredo
+   nunca deve ser exposto ao frontend.
+2. **Painel de verdade**, atrás de login normal (`RequireAuth` +
+   `RequireAdminRole`, deliberadamente SEM `RequirePremium` — administrar
+   contas não pode depender de já ser assinante, senão o primeiro admin,
+   ainda `free` logo após o bootstrap, ficaria trancado do próprio painel):
+   `GET /api/admin/users` lista todas as contas, `PATCH
+   /api/admin/users/:id/plan` e `PATCH /api/admin/users/:id/admin` trocam
+   plano/papel de qualquer conta. Uma conta não consegue remover o próprio
+   `is_admin` por aqui (trava em `handler.go`, `setAdmin`) — evita o único
+   admin se derrubar sem querer; recuperação nesse caso é o bootstrap acima
+   ou acesso direto ao banco.
+
+`is_admin` viaja dentro do JWT (igual `plan`) por performance — o preço é a
+mesma defasagem de até `AccessTokenTTL` já aceita para `plan` (ver
+`platform/jwt.go`). `GET /api/me` fica fora do grupo que exige premium
+(grupo `identity`, só `RequireAuth`) exatamente por isso: uma conta free —
+admin ou não — precisa conseguir descobrir a própria identidade/papel sem já
+ter o que essa descoberta desbloqueia.
 
 Use `golang-migrate` com SQL puro versionado. Não usar `AutoMigrate` do Gorm em
 produção — apenas em desenvolvimento local, se necessário.
@@ -157,8 +192,11 @@ parar e perguntar, não para improvisar uma exceção.
 obrigatórios), conexão com o banco (Gorm setup), router (Gin), middleware
 genérico (logging, recovery, CORS), JWT (assinar/validar access token),
 rate limit em memória, e os middlewares de autorização: `RequireAuth`
-(exige token válido, grava `user_id`/`plan` no contexto), `RequirePremium`
-(403 se o plano não for premium), `RequireAdminSecret` (protege `/api/admin`).
+(exige token válido, grava `user_id`/`plan`/`is_admin` no contexto),
+`RequirePremium` (403 se o plano não for premium), `RequireAdminRole` (403
+se `is_admin` não for true — deliberadamente independente de
+`RequirePremium`), `RequireAdminSecret` (protege as rotas de bootstrap, ver
+"Papel de administrador de contas" acima).
 **Pode importar**: nada de outros domínios.
 **Não pode**: conter regra de negócio de nenhum domínio, nem SQL de domínio.
 
